@@ -4,6 +4,11 @@ Control Cursor from your phone, tablet or any browser on your local network. Gre
 
 A local web UI that talks to Cursor's CLI agent on your machine. No cloud, accounts or other bs just on your local network. Also added some rudamentary security so that you need a key to access it incase you have many in a Wifi network. Important to only use this on trusted network that are safe, because the security is easy to bruteforce if you are in the same network.
 
+## Demo
+https://github.com/user-attachments/assets/6b2284fd-0e3d-46c9-ae63-86bbd672ad72
+
+
+
 ## Good to know
 
 This is essentially an easy way to use the Cursor CLI from your phone or any other device on your network.
