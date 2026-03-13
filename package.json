@@ -45,6 +45,7 @@
     "prepublishOnly": "npm run build && rm -f .next/server/**/*.map"
   },
   "dependencies": {
+    "better-sqlite3": "^12.6.2",
     "highlight.js": "^11.11.1",
     "next": "^15.5.12",
     "qrcode-terminal": "^0.12.0",
@@ -54,11 +55,13 @@
     "react-markdown": "^10.1.0",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
-    "web-haptics": "^0.0.6"
+    "web-haptics": "^0.0.6",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/postcss": "^4.2.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

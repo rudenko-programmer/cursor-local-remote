@@ -102,8 +102,10 @@ export function useChat(): UseChatReturn {
         try {
           const data = JSON.parse(e.data);
           if (data.isActive === true) {
+            isStreamingRef.current = true;
             setIsStreaming(true);
           } else {
+            isStreamingRef.current = false;
             setIsStreaming(false);
           }
           if (data.modifiedAt) {
@@ -125,6 +127,7 @@ export function useChat(): UseChatReturn {
             if (data.toolCalls?.length > 0) setToolCalls(data.toolCalls);
           }
           if (data.isActive === false) {
+            isStreamingRef.current = false;
             setIsStreaming(false);
             const pending = queueRef.current;
             if (pending.length > 0) {
@@ -137,6 +140,7 @@ export function useChat(): UseChatReturn {
               }, 0);
             }
           } else if (data.isActive === true) {
+            isStreamingRef.current = true;
             setIsStreaming(true);
           }
         } catch {
