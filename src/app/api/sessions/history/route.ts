@@ -1,18 +1,19 @@
 import { readSessionMessages, getSessionModifiedAt } from "@/lib/transcript-reader";
 import { getWorkspace } from "@/lib/workspace";
-import { SESSION_ID_RE } from "@/lib/validation";
+import { sessionIdParam } from "@/lib/validation";
+import { badRequest } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const sessionId = url.searchParams.get("id");
+  const rawId = url.searchParams.get("id");
   const checkOnly = url.searchParams.get("check") === "true";
   const sinceParam = url.searchParams.get("since");
 
-  if (!sessionId || !SESSION_ID_RE.test(sessionId)) {
-    return Response.json({ error: "invalid or missing session id" }, { status: 400 });
-  }
+  const result = sessionIdParam.safeParse(rawId);
+  if (!result.success) return badRequest("invalid or missing session id");
+  const sessionId = result.data;
 
   const workspace = getWorkspace();
 

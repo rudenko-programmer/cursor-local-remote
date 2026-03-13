@@ -1,77 +1,89 @@
-import { readFile, writeFile, mkdir, access } from "fs/promises";
+import Database from "better-sqlite3";
 import { join } from "path";
 import { homedir } from "os";
+import { mkdirSync } from "fs";
 import type { StoredSession } from "@/lib/types";
 
-interface StoreData {
-  sessions: StoredSession[];
-}
-
 const DATA_DIR = join(homedir(), ".cursor-local-remote");
-const STORE_PATH = join(DATA_DIR, "sessions.json");
+const DB_PATH = join(DATA_DIR, "sessions.db");
 
-async function ensureDir() {
-  try {
-    await access(DATA_DIR);
-  } catch {
-    await mkdir(DATA_DIR, { recursive: true });
-  }
+let db: Database.Database | null = null;
+
+function getDb(): Database.Database {
+  if (db) return db;
+
+  mkdirSync(DATA_DIR, { recursive: true });
+  db = new Database(DB_PATH);
+  db.pragma("journal_mode = WAL");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      workspace TEXT NOT NULL,
+      preview TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+
+  return db;
 }
 
-async function readStore(): Promise<StoreData> {
-  await ensureDir();
-  try {
-    const content = await readFile(STORE_PATH, "utf-8");
-    return JSON.parse(content);
-  } catch {
-    return { sessions: [] };
-  }
+function rowToSession(row: Record<string, unknown>): StoredSession {
+  return {
+    id: row.id as string,
+    title: row.title as string,
+    workspace: row.workspace as string,
+    preview: row.preview as string,
+    createdAt: row.created_at as number,
+    updatedAt: row.updated_at as number,
+  };
 }
 
-async function writeStore(data: StoreData) {
-  await ensureDir();
-  await writeFile(STORE_PATH, JSON.stringify(data, null, 2));
-}
-
-export async function upsertSession(
+export function upsertSession(
   sessionId: string,
   workspace: string,
   firstMessage: string,
-): Promise<StoredSession> {
-  const store = await readStore();
-  const existing = store.sessions.find((s) => s.id === sessionId);
+): StoredSession {
+  const conn = getDb();
+  const now = Date.now();
+  const existing = conn.prepare("SELECT * FROM sessions WHERE id = ?").get(sessionId) as
+    | Record<string, unknown>
+    | undefined;
 
   if (existing) {
-    existing.updatedAt = Date.now();
-    if (firstMessage) existing.preview = firstMessage.slice(0, 120);
-    await writeStore(store);
-    return existing;
+    const preview = firstMessage ? firstMessage.slice(0, 120) : (existing.preview as string);
+    conn.prepare("UPDATE sessions SET updated_at = ?, preview = ? WHERE id = ?").run(
+      now,
+      preview,
+      sessionId,
+    );
+    return rowToSession({ ...existing, updated_at: now, preview });
   }
 
   const title = firstMessage.slice(0, 60) || "New session";
-  const session: StoredSession = {
-    id: sessionId,
-    title,
-    workspace,
-    preview: firstMessage.slice(0, 120),
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  };
-  store.sessions.unshift(session);
-  await writeStore(store);
-  return session;
+  const preview = firstMessage.slice(0, 120);
+  conn.prepare(
+    "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(sessionId, title, workspace, preview, now, now);
+
+  return { id: sessionId, title, workspace, preview, createdAt: now, updatedAt: now };
 }
 
-export async function listSessions(workspace?: string): Promise<StoredSession[]> {
-  const store = await readStore();
-  const sessions = workspace
-    ? store.sessions.filter((s) => s.workspace === workspace)
-    : store.sessions;
-  return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
+export function listSessions(workspace?: string): StoredSession[] {
+  const conn = getDb();
+  const rows = workspace
+    ? (conn
+        .prepare("SELECT * FROM sessions WHERE workspace = ? ORDER BY updated_at DESC")
+        .all(workspace) as Record<string, unknown>[])
+    : (conn
+        .prepare("SELECT * FROM sessions ORDER BY updated_at DESC")
+        .all() as Record<string, unknown>[]);
+  return rows.map(rowToSession);
 }
 
-export async function deleteSession(sessionId: string) {
-  const store = await readStore();
-  store.sessions = store.sessions.filter((s) => s.id !== sessionId);
-  await writeStore(store);
+export function deleteSession(sessionId: string): void {
+  const conn = getDb();
+  conn.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
 }

@@ -45,7 +45,7 @@ export function ChatInput({
       .then((data) => {
         if (!cancelled && data.models?.length > 0) setModels(data.models);
       })
-      .catch(() => {})
+      .catch((err) => console.error("[models] Failed to fetch:", err))
       .finally(() => {
         if (!cancelled) setModelsLoading(false);
       });

@@ -74,7 +74,7 @@ export function ChatContainer({
     apiFetch("/api/info")
       .then((r) => r.json())
       .then((data) => setWorkspace(data.workspace || ""))
-      .catch(() => {});
+      .catch((err) => console.error("[workspace] Failed to fetch:", err));
   }, []);
 
   useEffect(() => {
@@ -84,7 +84,7 @@ export function ChatContainer({
       .then((data) => {
         if (data.sessions?.length > 0) setRecentSessions(data.sessions.slice(0, 3));
       })
-      .catch(() => {});
+      .catch((err) => console.error("[sessions] Failed to fetch:", err));
   }, [fetchWorkspace]);
 
   useEffect(() => {

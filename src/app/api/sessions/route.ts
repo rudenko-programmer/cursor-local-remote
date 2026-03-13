@@ -1,7 +1,8 @@
 import { listSessions, deleteSession } from "@/lib/session-store";
 import { readCursorSessions } from "@/lib/transcript-reader";
 import { getWorkspace } from "@/lib/workspace";
-import { SESSION_ID_RE } from "@/lib/validation";
+import { deleteSessionSchema, parseBody } from "@/lib/validation";
+import { badRequest, parseJsonBody } from "@/lib/errors";
 import type { StoredSession } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -33,28 +34,24 @@ export async function GET(req: Request) {
   const workspace = getWorkspace();
 
   if (all) {
-    const ours = await listSessions();
+    const ours = listSessions();
     return Response.json({ sessions: ours, workspace });
   }
 
   const cursorSessions = await readCursorSessions(workspace);
-  const ourSessions = await listSessions(workspace);
+  const ourSessions = listSessions(workspace);
   const merged = mergeSessions(ourSessions, cursorSessions);
 
   return Response.json({ sessions: merged, workspace });
 }
 
 export async function DELETE(req: Request) {
-  let body: { sessionId?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const raw = await parseJsonBody<{ sessionId?: string }>(req);
+  if (raw instanceof Response) return raw;
 
-  if (!body.sessionId || !SESSION_ID_RE.test(body.sessionId)) {
-    return Response.json({ error: "invalid sessionId" }, { status: 400 });
-  }
-  await deleteSession(body.sessionId);
+  const parsed = parseBody(deleteSessionSchema, raw);
+  if ("error" in parsed) return badRequest(parsed.error);
+
+  deleteSession(parsed.data.sessionId);
   return Response.json({ ok: true });
 }

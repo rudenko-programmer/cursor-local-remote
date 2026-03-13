@@ -1,5 +1,6 @@
 import { getActiveSessionIds, killProcess } from "@/lib/process-registry";
-import { SESSION_ID_RE } from "@/lib/validation";
+import { deleteSessionSchema, parseBody } from "@/lib/validation";
+import { badRequest, parseJsonBody } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";
 
@@ -8,17 +9,12 @@ export async function GET() {
 }
 
 export async function DELETE(req: Request) {
-  let body: { sessionId?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "invalid json" }, { status: 400 });
-  }
+  const raw = await parseJsonBody<{ sessionId?: string }>(req);
+  if (raw instanceof Response) return raw;
 
-  if (!body.sessionId || !SESSION_ID_RE.test(body.sessionId)) {
-    return Response.json({ error: "invalid sessionId" }, { status: 400 });
-  }
+  const parsed = parseBody(deleteSessionSchema, raw);
+  if ("error" in parsed) return badRequest(parsed.error);
 
-  const killed = killProcess(body.sessionId);
+  const killed = killProcess(parsed.data.sessionId);
   return Response.json({ killed });
 }

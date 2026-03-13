@@ -1,4 +1,5 @@
 import type { ChildProcess } from "child_process";
+import { LIVE_EVENT_TTL_MS } from "@/lib/constants";
 
 interface RunningProcess {
   child: ChildProcess;
@@ -12,8 +13,6 @@ const processes = new Map<string, RunningProcess>();
 const exitListeners = new Map<string, Set<() => void>>();
 const liveEvents = new Map<string, Record<string, unknown>[]>();
 const liveListeners = new Map<string, Set<() => void>>();
-
-const LIVE_EVENT_TTL_MS = 120_000;
 
 export function pushLiveEvent(sessionId: string, event: Record<string, unknown>): void {
   let events = liveEvents.get(sessionId);
@@ -101,12 +100,11 @@ export function promoteToSessionId(requestId: string, sessionId: string): void {
 }
 
 export function getActiveSessionIds(): string[] {
-  const ids: string[] = [];
+  const seen = new Set<string>();
   for (const [key, entry] of processes) {
-    const id = entry.sessionId ?? key;
-    if (!ids.includes(id)) ids.push(id);
+    seen.add(entry.sessionId ?? key);
   }
-  return ids;
+  return Array.from(seen);
 }
 
 export function isActive(sessionId: string): boolean {
@@ -118,4 +116,14 @@ export function killProcess(sessionId: string): boolean {
   if (!entry) return false;
   entry.child.kill("SIGTERM");
   return true;
+}
+
+export function killAllProcesses(): void {
+  for (const entry of processes.values()) {
+    try {
+      entry.child.kill("SIGTERM");
+    } catch {
+      // already dead
+    }
+  }
 }

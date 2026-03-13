@@ -27,10 +27,17 @@ export function useNotifications() {
       if (typeof Notification === "undefined") return;
       if (Notification.permission !== "granted") return;
       if (!document.hidden) return;
-      try {
-        new Notification(title, { icon: "/icon-192.png", ...options });
-      } catch {
-        // notification failed silently
+
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.ready
+          .then((reg) => {
+            reg.active?.postMessage({
+              type: "SHOW_NOTIFICATION",
+              title,
+              options: { icon: "/icon-192.png", ...options },
+            });
+          })
+          .catch((err) => console.error("[notifications] SW notify failed:", err));
       }
     },
     [],

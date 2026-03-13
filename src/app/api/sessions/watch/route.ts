@@ -6,14 +6,17 @@ import {
   parseLiveEvents,
 } from "@/lib/transcript-reader";
 import { getWorkspace } from "@/lib/workspace";
-import { SESSION_ID_RE } from "@/lib/validation";
+import { sessionIdParam } from "@/lib/validation";
 import { isActive, onProcessExit, getLiveEvents, onLiveUpdate } from "@/lib/process-registry";
+import { badRequest, notFound } from "@/lib/errors";
+import {
+  SSE_DEBOUNCE_MS,
+  SSE_KEEPALIVE_MS,
+  FILE_POLL_MS,
+  PROCESS_EXIT_SETTLE_MS,
+} from "@/lib/constants";
 
 export const dynamic = "force-dynamic";
-
-const DEBOUNCE_MS = 150;
-const KEEPALIVE_MS = 15_000;
-const FILE_POLL_MS = 800;
 
 function sseMessage(event: string, data: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -21,17 +24,17 @@ function sseMessage(event: string, data: unknown): string {
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
-  const sessionId = url.searchParams.get("id");
+  const rawId = url.searchParams.get("id");
 
-  if (!sessionId || !SESSION_ID_RE.test(sessionId)) {
-    return Response.json({ error: "invalid or missing session id" }, { status: 400 });
-  }
+  const result = sessionIdParam.safeParse(rawId);
+  if (!result.success) return badRequest("invalid or missing session id");
+  const sessionId = result.data;
 
   const workspace = getWorkspace();
   let jsonlPath = await resolveJsonlPath(workspace, sessionId);
 
   if (!jsonlPath && !isActive(sessionId)) {
-    return Response.json({ error: "session not found" }, { status: 404 });
+    return notFound("session not found");
   }
 
   let watcher: FSWatcher | null = null;
@@ -52,7 +55,7 @@ export async function GET(req: Request) {
       watcher = watch(path, () => {
         if (cancelled) return;
         if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => void pushUpdate(), DEBOUNCE_MS);
+        debounceTimer = setTimeout(() => void pushUpdate(), SSE_DEBOUNCE_MS);
       });
       watcher.on("error", () => {
         cleanup();
@@ -110,7 +113,7 @@ export async function GET(req: Request) {
 
       unsubExit = onProcessExit(sessionId, async () => {
         if (cancelled) return;
-        await new Promise((r) => setTimeout(r, 300));
+        await new Promise((r) => setTimeout(r, PROCESS_EXIT_SETTLE_MS));
         try {
           const { messages, toolCalls, modifiedAt } = await readSessionMessages(workspace, sessionId);
           if (modifiedAt > lastSentModified) lastSentModified = modifiedAt;
@@ -131,7 +134,7 @@ export async function GET(req: Request) {
         } catch {
           cleanup();
         }
-      }, KEEPALIVE_MS);
+      }, SSE_KEEPALIVE_MS);
     },
     cancel() {
       cleanup();

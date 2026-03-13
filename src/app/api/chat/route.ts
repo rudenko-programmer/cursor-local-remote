@@ -1,12 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { spawnAgent } from "@/lib/cursor-cli";
 import { getWorkspace } from "@/lib/workspace";
 import { upsertSession } from "@/lib/session-store";
 import { registerProcess, promoteToSessionId, pushLiveEvent } from "@/lib/process-registry";
-import { SESSION_ID_RE } from "@/lib/validation";
-import type { ChatRequest, AgentMode } from "@/lib/types";
-
-const VALID_MODES: AgentMode[] = ["agent", "ask", "plan"];
-const INIT_TIMEOUT_MS = 30_000;
+import { chatRequestSchema, parseBody } from "@/lib/validation";
+import { badRequest, serverError, safeErrorMessage, parseJsonBody } from "@/lib/errors";
+import { AGENT_INIT_TIMEOUT_MS } from "@/lib/constants";
+import type { ChatRequest } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +23,7 @@ function waitForSessionId(
 
     const timer = setTimeout(() => {
       if (!found) resolve(null);
-    }, INIT_TIMEOUT_MS);
+    }, AGENT_INIT_TIMEOUT_MS);
 
     child.stdout?.on("data", (chunk: Buffer) => {
       buffer += chunk.toString();
@@ -39,7 +39,7 @@ function waitForSessionId(
             found = true;
             resolvedSessionId = event.session_id;
             clearTimeout(timer);
-            void upsertSession(event.session_id, workspace, prompt);
+            upsertSession(event.session_id, workspace, prompt);
             promoteToSessionId(requestId, event.session_id);
             resolve(event.session_id);
           }
@@ -70,38 +70,16 @@ function waitForSessionId(
 }
 
 export async function POST(req: Request) {
-  let body: ChatRequest;
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
-  }
+  const raw = await parseJsonBody<ChatRequest>(req);
+  if (raw instanceof Response) return raw;
 
-  if (!body.prompt?.trim()) {
-    return Response.json({ error: "prompt is required" }, { status: 400 });
-  }
-
-  if (body.sessionId !== undefined && !SESSION_ID_RE.test(body.sessionId)) {
-    return Response.json({ error: "invalid sessionId" }, { status: 400 });
-  }
-
-  if (body.mode !== undefined && !VALID_MODES.includes(body.mode)) {
-    return Response.json({ error: "invalid mode" }, { status: 400 });
-  }
-
-  if (
-    body.model !== undefined &&
-    (typeof body.model !== "string" ||
-      body.model.length > 128 ||
-      /[^a-zA-Z0-9._/-]/.test(body.model))
-  ) {
-    return Response.json({ error: "invalid model" }, { status: 400 });
-  }
+  const parsed = parseBody(chatRequestSchema, raw);
+  if ("error" in parsed) return badRequest(parsed.error);
+  const body = parsed.data;
 
   const workspace = getWorkspace();
 
   try {
-    const { randomUUID } = await import("node:crypto");
     const requestId = randomUUID();
 
     const child = spawnAgent({
@@ -124,12 +102,12 @@ export async function POST(req: Request) {
 
     if (!sessionId) {
       child.kill("SIGTERM");
-      return Response.json({ error: "Agent failed to start" }, { status: 500 });
+      return serverError("Agent failed to start");
     }
 
     return Response.json({ sessionId });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to start agent";
-    return Response.json({ error: message }, { status: 500 });
+    safeErrorMessage(err, "Failed to start agent");
+    return serverError("Failed to start agent");
   }
 }

@@ -1,6 +1,8 @@
 import { execFile } from "child_process";
 import { promisify } from "util";
 import type { ModelInfo } from "@/lib/types";
+import { serverError, safeErrorMessage } from "@/lib/errors";
+import { MODELS_CACHE_TTL_MS, MODELS_FETCH_TIMEOUT_MS } from "@/lib/constants";
 
 const execFileAsync = promisify(execFile);
 
@@ -33,17 +35,16 @@ function parseModels(output: string): ModelInfo[] {
 }
 
 let cachedModels: { models: ModelInfo[]; fetchedAt: number } | null = null;
-const CACHE_TTL = 5 * 60 * 1000;
 
 export async function GET() {
-  if (cachedModels && Date.now() - cachedModels.fetchedAt < CACHE_TTL) {
+  if (cachedModels && Date.now() - cachedModels.fetchedAt < MODELS_CACHE_TTL_MS) {
     return Response.json({ models: cachedModels.models });
   }
 
   try {
     const { stdout } = await execFileAsync("agent", ["models"], {
       encoding: "utf-8",
-      timeout: 10000,
+      timeout: MODELS_FETCH_TIMEOUT_MS,
     });
 
     const models = parseModels(stdout);
@@ -54,7 +55,7 @@ export async function GET() {
 
     return Response.json({ models });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Failed to fetch models";
-    return Response.json({ models: [], error: message }, { status: 500 });
+    safeErrorMessage(err, "Failed to fetch models");
+    return serverError("Failed to fetch models");
   }
 }

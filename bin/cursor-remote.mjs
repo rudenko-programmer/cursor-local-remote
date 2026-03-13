@@ -6,6 +6,7 @@ import { fileURLToPath } from "url";
 import { networkInterfaces } from "os";
 import { existsSync } from "fs";
 import { randomInt } from "crypto";
+import { createServer } from "net";
 import qrcode from "qrcode-terminal";
 
 const WORDS = [
@@ -92,12 +93,32 @@ if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
   console.error(`  Error: invalid port: ${rawPort}`);
   process.exit(1);
 }
-const port = String(portNum);
 const workspace = positional[0] ? resolve(positional[0]) : process.cwd();
 
 if (!existsSync(workspace)) {
   console.error(`  Error: workspace path does not exist: ${workspace}`);
   process.exit(1);
+}
+
+const MAX_PORT_ATTEMPTS = 20;
+
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
+    const srv = createServer();
+    srv.once("error", () => resolve(false));
+    srv.listen(port, "0.0.0.0", () => {
+      srv.close(() => resolve(true));
+    });
+  });
+}
+
+async function findAvailablePort(startPort) {
+  for (let i = 0; i < MAX_PORT_ATTEMPTS; i++) {
+    const candidate = startPort + i;
+    if (candidate > 65535) break;
+    if (await isPortAvailable(candidate)) return candidate;
+  }
+  return null;
 }
 
 function getLanIp() {
@@ -111,6 +132,16 @@ function getLanIp() {
   }
   return null;
 }
+
+const availablePort = await findAvailablePort(portNum);
+if (availablePort === null) {
+  console.error(`  Error: no available port found starting from ${portNum}`);
+  process.exit(1);
+}
+if (availablePort !== portNum) {
+  console.log(`  \x1b[33mPort ${portNum} in use, using ${availablePort}\x1b[0m`);
+}
+const port = String(availablePort);
 
 const lanIp = getLanIp();
 const localUrl = `http://localhost:${port}`;

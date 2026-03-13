@@ -1,18 +1,15 @@
 "use client";
 
 import { useState, useCallback, useRef, useEffect } from "react";
-import type {
-  ChatMessage,
-  ToolCallInfo,
-  AgentMode,
-  QueuedMessage,
-} from "@/lib/types";
+import type { ChatMessage, AgentMode } from "@/lib/types";
 import { apiFetch } from "@/lib/api-fetch";
 import { uuid } from "@/lib/uuid";
+import { useSessionWatch } from "./use-session-watch";
+import { useMessageQueue } from "./use-message-queue";
 
 interface UseChatReturn {
   messages: ChatMessage[];
-  toolCalls: ToolCallInfo[];
+  toolCalls: ReturnType<typeof useSessionWatch>["toolCalls"];
   sessionId: string | null;
   isStreaming: boolean;
   isLoadingHistory: boolean;
@@ -21,7 +18,7 @@ interface UseChatReturn {
   selectedModel: string;
   selectedMode: AgentMode;
   error: string | null;
-  queuedMessages: QueuedMessage[];
+  queuedMessages: ReturnType<typeof useMessageQueue>["queuedMessages"];
   sendMessage: (prompt: string, overrides?: { model?: string; mode?: AgentMode }) => Promise<void>;
   loadSession: (id: string) => Promise<void>;
   setSessionId: (id: string | null) => void;
@@ -49,8 +46,6 @@ async function fetchActiveSessions(): Promise<string[]> {
 export { fetchActiveSessions };
 
 export function useChat(): UseChatReturn {
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [toolCalls, setToolCalls] = useState<ToolCallInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
@@ -58,146 +53,43 @@ export function useChat(): UseChatReturn {
   const [selectedModel, setSelectedModel] = useState<string>("auto");
   const [selectedMode, setSelectedMode] = useState<AgentMode>("agent");
   const [error, setError] = useState<string | null>(null);
-  const [isWatching, setIsWatching] = useState(false);
-  const [queuedMessages, setQueuedMessages] = useState<QueuedMessage[]>([]);
-  const queueRef = useRef<QueuedMessage[]>([]);
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const lastModifiedRef = useRef<number>(0);
+
   const sessionIdRef = useRef<string | null>(null);
   const isStreamingRef = useRef(false);
   const sendMessageRef = useRef<
     ((prompt: string, overrides?: { model?: string; mode?: AgentMode }) => Promise<void>) | undefined
   >(undefined);
 
-  useEffect(() => {
-    queueRef.current = queuedMessages;
-  }, [queuedMessages]);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
 
-  useEffect(() => {
-    sessionIdRef.current = sessionId;
-  }, [sessionId]);
-
-  useEffect(() => {
-    isStreamingRef.current = isStreaming;
-  }, [isStreaming]);
-
-  const stopWatching = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+  const handleStreamEnd = useCallback(() => {
+    setIsStreaming(false);
+    const queue = queueHook;
+    const next = queue.dequeueNext();
+    if (next) {
+      const overrides = next.model || next.mode ? { model: next.model, mode: next.mode } : undefined;
+      setTimeout(() => { sendMessageRef.current?.(next.content, overrides); }, 0);
     }
-    setIsWatching(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const startWatching = useCallback(
-    (id: string) => {
-      stopWatching();
+  const watch = useSessionWatch({
+    onStreamEnd: handleStreamEnd,
+    onStreamStart: () => setIsStreaming(true),
+  });
 
-      const url = `/api/sessions/watch?id=${encodeURIComponent(id)}`;
-      const es = new EventSource(url);
-      eventSourceRef.current = es;
-
-      es.addEventListener("connected", (e) => {
-        setIsWatching(true);
-        try {
-          const data = JSON.parse(e.data);
-          if (data.isActive === true) {
-            isStreamingRef.current = true;
-            setIsStreaming(true);
-          } else {
-            isStreamingRef.current = false;
-            setIsStreaming(false);
-          }
-          if (data.modifiedAt) {
-            lastModifiedRef.current = data.modifiedAt;
-          }
-          if (data.messages?.length > 0) setMessages(data.messages);
-          if (data.toolCalls?.length > 0) setToolCalls(data.toolCalls);
-        } catch {
-          // ignore
-        }
-      });
-
-      es.addEventListener("update", (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.modifiedAt && data.modifiedAt > lastModifiedRef.current) {
-            lastModifiedRef.current = data.modifiedAt;
-            if (data.messages?.length > 0) setMessages(data.messages);
-            if (data.toolCalls?.length > 0) setToolCalls(data.toolCalls);
-          }
-          if (data.isActive === false) {
-            isStreamingRef.current = false;
-            setIsStreaming(false);
-            const pending = queueRef.current;
-            if (pending.length > 0) {
-              const next = pending[0];
-              setQueuedMessages((prev) => prev.slice(1));
-              const overrides =
-                next.model || next.mode ? { model: next.model, mode: next.mode } : undefined;
-              setTimeout(() => {
-                sendMessageRef.current?.(next.content, overrides);
-              }, 0);
-            }
-          } else if (data.isActive === true) {
-            isStreamingRef.current = true;
-            setIsStreaming(true);
-          }
-        } catch {
-          // malformed event
-        }
-      });
-
-      es.addEventListener("error", () => {
-        // EventSource auto-reconnects
-      });
-    },
-    [stopWatching],
-  );
-
-  useEffect(() => {
-    return () => {
-      stopWatching();
-    };
-  }, [stopWatching]);
-
-  useEffect(() => {
-    const handleVisibility = async () => {
-      if (document.visibilityState !== "visible") return;
-      const sid = sessionIdRef.current;
-      if (!sid) return;
-
-      try {
-        const res = await apiFetch(`/api/sessions/history?id=${encodeURIComponent(sid)}`);
-        if (!res.ok) return;
-        const data = await res.json();
-        if (data.messages?.length > 0) setMessages(data.messages);
-        if (data.toolCalls?.length > 0) setToolCalls(data.toolCalls);
-        if (data.modifiedAt) lastModifiedRef.current = data.modifiedAt;
-
-        const active = await fetchActiveSessions();
-        setIsStreaming(active.includes(sid));
-        setError(null);
-
-        if (!eventSourceRef.current) startWatching(sid);
-      } catch {
-        // network still down
-      }
-    };
-
-    document.addEventListener("visibilitychange", handleVisibility);
-    return () => document.removeEventListener("visibilitychange", handleVisibility);
-  }, [startWatching]);
+  const queueHook = useMessageQueue({ selectedModel, selectedMode });
 
   const clearChat = useCallback(() => {
-    stopWatching();
-    setMessages([]);
-    setToolCalls([]);
+    watch.stopWatching();
+    watch.resetState();
     setSessionId(null);
     setModel(null);
     setError(null);
-    setQueuedMessages([]);
-  }, [stopWatching]);
+    setIsStreaming(false);
+    queueHook.clearQueue();
+  }, [watch, queueHook]);
 
   const stopStreaming = useCallback(() => {
     if (sessionIdRef.current) {
@@ -205,35 +97,22 @@ export function useChat(): UseChatReturn {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId: sessionIdRef.current }),
-      }).catch(() => {});
+      }).catch((err) => console.error("[chat] Failed to stop streaming:", err));
     }
     setIsStreaming(false);
   }, []);
 
   const loadSession = useCallback(
     async (id: string) => {
-      stopWatching();
+      watch.stopWatching();
+      watch.resetState();
       setIsLoadingHistory(true);
       setError(null);
-      setMessages([]);
-      setToolCalls([]);
       setSessionId(id);
-      lastModifiedRef.current = 0;
 
       try {
-        const res = await apiFetch(`/api/sessions/history?id=${encodeURIComponent(id)}`);
-        if (!res.ok) throw new Error("Failed to load session");
-        const data = await res.json();
-        if (data.messages && data.messages.length > 0) {
-          setMessages(data.messages);
-        }
-        if (data.toolCalls && data.toolCalls.length > 0) {
-          setToolCalls(data.toolCalls);
-        }
-        if (data.modifiedAt) {
-          lastModifiedRef.current = data.modifiedAt;
-        }
-        startWatching(id);
+        await watch.refreshFromHistory(id);
+        watch.startWatching(id);
 
         const active = await fetchActiveSessions();
         if (active.includes(id)) {
@@ -246,24 +125,17 @@ export function useChat(): UseChatReturn {
         setIsLoadingHistory(false);
       }
     },
-    [stopWatching, startWatching],
+    [watch],
   );
 
   const sendMessage = useCallback(
     async (prompt: string, overrides?: { model?: string; mode?: AgentMode }) => {
       if (isStreamingRef.current) {
-        const queued: QueuedMessage = {
-          id: uuid(),
-          content: prompt,
-          timestamp: Date.now(),
-          model: selectedModel,
-          mode: selectedMode,
-        };
-        setQueuedMessages((prev) => [...prev, queued]);
+        queueHook.enqueue(prompt);
         return;
       }
 
-      stopWatching();
+      watch.stopWatching();
       setError(null);
       setIsStreaming(true);
 
@@ -273,7 +145,7 @@ export function useChat(): UseChatReturn {
         content: prompt,
         timestamp: Date.now(),
       };
-      setMessages((prev) => [...prev, userMessage]);
+      watch.setMessages((prev) => [...prev, userMessage]);
 
       const effectiveModel = overrides?.model ?? selectedModel;
       const effectiveMode = overrides?.mode ?? selectedMode;
@@ -302,7 +174,7 @@ export function useChat(): UseChatReturn {
         setSessionId(newSessionId);
         if (data.model) setModel(data.model);
 
-        startWatching(newSessionId);
+        watch.startWatching(newSessionId);
       } catch (err) {
         if (err instanceof Error && err.name === "AbortError") return;
         const message = err instanceof Error ? err.message : "Unknown error";
@@ -310,58 +182,66 @@ export function useChat(): UseChatReturn {
         setIsStreaming(false);
       }
     },
-    [selectedModel, selectedMode, stopWatching, startWatching],
+    [selectedModel, selectedMode, watch, queueHook],
   );
 
+  useEffect(() => { sendMessageRef.current = sendMessage; }, [sendMessage]);
+
   useEffect(() => {
-    sendMessageRef.current = sendMessage;
-  }, [sendMessage]);
+    const handleVisibility = async () => {
+      if (document.visibilityState !== "visible") return;
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+
+      try {
+        await watch.refreshFromHistory(sid);
+        const active = await fetchActiveSessions();
+        setIsStreaming(active.includes(sid));
+        setError(null);
+        if (!watch.isWatching) watch.startWatching(sid);
+      } catch {
+        console.error("[chat] Failed to refresh on visibility change");
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => document.removeEventListener("visibilitychange", handleVisibility);
+  }, [watch]);
 
   const forceSendQueued = useCallback((id: string) => {
-    const msg = queueRef.current.find((m) => m.id === id);
+    const msg = queueHook.forceSendQueued(id);
     if (!msg) return;
-    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
     setIsStreaming(false);
-    const overrides =
-      msg.model || msg.mode ? { model: msg.model, mode: msg.mode } : undefined;
-    setTimeout(() => {
-      sendMessageRef.current?.(msg.content, overrides);
-    }, 0);
-  }, []);
-
-  const editQueued = useCallback((id: string, newContent: string) => {
-    setQueuedMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: newContent } : m)));
-  }, []);
-
-  const deleteQueued = useCallback((id: string) => {
-    setQueuedMessages((prev) => prev.filter((m) => m.id !== id));
-  }, []);
+    const overrides = msg.model || msg.mode ? { model: msg.model, mode: msg.mode } : undefined;
+    setTimeout(() => { sendMessageRef.current?.(msg.content, overrides); }, 0);
+  }, [queueHook]);
 
   const retryLastMessage = useCallback(() => {
     if (isStreamingRef.current) return;
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === "user");
+    const msgs = watch.messages;
+    const lastUserMsg = [...msgs].reverse().find((m) => m.role === "user");
     if (!lastUserMsg) return;
     const prompt = lastUserMsg.content;
-    const idx = messages.findIndex((m) => m.id === lastUserMsg.id);
+    const idx = msgs.findIndex((m) => m.id === lastUserMsg.id);
     if (idx >= 0) {
-      setMessages(messages.slice(0, idx));
+      watch.setMessages(msgs.slice(0, idx));
     }
-    setToolCalls((prev) => prev.filter((tc) => tc.timestamp < lastUserMsg.timestamp));
-    void sendMessage(prompt).catch(() => {});
-  }, [messages, sendMessage]);
+    watch.setToolCalls((prev) => prev.filter((tc) => tc.timestamp < lastUserMsg.timestamp));
+    void sendMessage(prompt).catch((err) => console.error("[chat] Retry failed:", err));
+  }, [watch, sendMessage]);
 
   return {
-    messages,
-    toolCalls,
+    messages: watch.messages,
+    toolCalls: watch.toolCalls,
     sessionId,
     isStreaming,
     isLoadingHistory,
-    isWatching,
+    isWatching: watch.isWatching,
     model,
     selectedModel,
     selectedMode,
     error,
-    queuedMessages,
+    queuedMessages: queueHook.queuedMessages,
     sendMessage,
     loadSession,
     setSessionId,
@@ -371,7 +251,7 @@ export function useChat(): UseChatReturn {
     stopStreaming,
     retryLastMessage,
     forceSendQueued,
-    editQueued,
-    deleteQueued,
+    editQueued: queueHook.editQueued,
+    deleteQueued: queueHook.deleteQueued,
   };
 }

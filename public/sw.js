@@ -1,4 +1,4 @@
-const CACHE_NAME = "clr-v1";
+const CACHE_NAME = "clr-v2";
 const SHELL_URLS = ["/"];
 
 self.addEventListener("install", (event) => {
@@ -15,6 +15,25 @@ self.addEventListener("activate", (event) => {
     ),
   );
   self.clients.claim();
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "SHOW_NOTIFICATION") {
+    const { title, options } = event.data;
+    self.registration.showNotification(title, options);
+  }
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      if (windowClients.length > 0) {
+        return windowClients[0].focus();
+      }
+      return clients.openWindow("/");
+    }),
+  );
 });
 
 self.addEventListener("fetch", (event) => {
