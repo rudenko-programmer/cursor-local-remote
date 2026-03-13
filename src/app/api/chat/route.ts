@@ -1,38 +1,31 @@
 import { spawnAgent, createStreamFromProcess } from "@/lib/cursor-cli";
 import { getWorkspace } from "@/lib/workspace";
 import { upsertSession } from "@/lib/session-store";
-import type { ChatRequest } from "@/lib/types";
+import { SESSION_ID_RE } from "@/lib/validation";
+import type { ChatRequest, AgentMode } from "@/lib/types";
+
+const VALID_MODES: AgentMode[] = ["agent", "ask", "plan"];
+const MAX_CONCURRENT = 3;
 
 export const dynamic = "force-dynamic";
 
-const DEBUG = process.env.NODE_ENV === "development";
-
-function log(...args: unknown[]) {
-  if (DEBUG) console.log("[api/chat]", ...args);
-}
+let activeCount = 0;
 
 function createTappedStream(
   source: ReadableStream<Uint8Array>,
   workspace: string,
-  prompt: string
+  prompt: string,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
   let captured = false;
-  let chunkCount = 0;
 
   return new ReadableStream({
     async pull(controller) {
       const { done, value } = await reader.read();
       if (done) {
-        log("tapped stream done");
+        activeCount = Math.max(0, activeCount - 1);
         controller.close();
         return;
-      }
-
-      chunkCount++;
-      if (DEBUG && value) {
-        const text = new TextDecoder().decode(value);
-        log(`tap chunk #${chunkCount}:`, text.slice(0, 200));
       }
 
       if (!captured && value) {
@@ -42,12 +35,11 @@ function createTappedStream(
           try {
             const event = JSON.parse(line);
             if (event.type === "system" && event.subtype === "init" && event.session_id) {
-              log("captured session_id:", event.session_id);
               upsertSession(event.session_id, workspace, prompt);
               captured = true;
             }
           } catch {
-            log("non-json line in tap:", line.slice(0, 100));
+            // non-json line, skip
           }
         }
       }
@@ -55,12 +47,20 @@ function createTappedStream(
       controller.enqueue(value);
     },
     cancel() {
+      activeCount = Math.max(0, activeCount - 1);
       reader.cancel();
     },
   });
 }
 
 export async function POST(req: Request) {
+  if (activeCount >= MAX_CONCURRENT) {
+    return Response.json(
+      { error: `Too many concurrent sessions (max ${MAX_CONCURRENT})` },
+      { status: 429 }
+    );
+  }
+
   let body: ChatRequest;
   try {
     body = await req.json();
@@ -72,17 +72,23 @@ export async function POST(req: Request) {
     return Response.json({ error: "prompt is required" }, { status: 400 });
   }
 
-  const workspace = body.workspace || getWorkspace();
+  if (body.sessionId !== undefined && !SESSION_ID_RE.test(body.sessionId)) {
+    return Response.json({ error: "invalid sessionId" }, { status: 400 });
+  }
 
-  log("request:", {
-    prompt: body.prompt.slice(0, 100),
-    sessionId: body.sessionId,
-    workspace,
-    model: body.model,
-    mode: body.mode,
-  });
+  if (body.mode !== undefined && !VALID_MODES.includes(body.mode)) {
+    return Response.json({ error: "invalid mode" }, { status: 400 });
+  }
+
+  if (body.model !== undefined && (typeof body.model !== "string" || body.model.length > 128 || /[^a-zA-Z0-9._/-]/.test(body.model))) {
+    return Response.json({ error: "invalid model" }, { status: 400 });
+  }
+
+  const workspace = getWorkspace();
 
   try {
+    activeCount++;
+
     const child = spawnAgent({
       prompt: body.prompt,
       sessionId: body.sessionId,
@@ -103,8 +109,8 @@ export async function POST(req: Request) {
       },
     });
   } catch (err) {
+    activeCount = Math.max(0, activeCount - 1);
     const message = err instanceof Error ? err.message : "Failed to start agent";
-    log("error:", message);
     return Response.json({ error: message }, { status: 500 });
   }
 }

@@ -1,19 +1,12 @@
 import { spawn, type ChildProcess } from "child_process";
 import type { AgentMode } from "@/lib/types";
 
-const DEBUG = process.env.NODE_ENV === "development";
-
-function log(...args: unknown[]) {
-  if (DEBUG) console.log("[cursor-cli]", ...args);
-}
-
 export interface AgentOptions {
   prompt: string;
   sessionId?: string;
   workspace?: string;
   model?: string;
   mode?: AgentMode;
-  force?: boolean;
 }
 
 export function spawnAgent(options: AgentOptions): ChildProcess {
@@ -23,9 +16,11 @@ export function spawnAgent(options: AgentOptions): ChildProcess {
     "--output-format",
     "stream-json",
     "--stream-partial-output",
-    "--trust",
   ];
 
+  if (process.env.CURSOR_TRUST === "1") {
+    args.push("--trust");
+  }
   if (options.sessionId) {
     args.push("--resume", options.sessionId);
   }
@@ -38,28 +33,11 @@ export function spawnAgent(options: AgentOptions): ChildProcess {
   if (options.mode && options.mode !== "agent") {
     args.push("--mode", options.mode);
   }
-  if (options.force !== false) {
-    args.push("--force");
-  }
 
-  log("spawning:", "agent", args.join(" "));
-
-  const child = spawn("agent", args, {
+  return spawn("agent", args, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env },
   });
-
-  log("pid:", child.pid);
-
-  child.on("error", (err) => {
-    log("spawn error:", err.message);
-  });
-
-  child.on("close", (code, signal) => {
-    log("process closed, code:", code, "signal:", signal);
-  });
-
-  return child;
 }
 
 export function createStreamFromProcess(child: ChildProcess): ReadableStream<Uint8Array> {
@@ -68,14 +46,9 @@ export function createStreamFromProcess(child: ChildProcess): ReadableStream<Uin
   return new ReadableStream({
     start(controller) {
       let buffer = "";
-      let chunkCount = 0;
 
       child.stdout?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        chunkCount++;
-        log(`stdout chunk #${chunkCount} (${text.length} bytes):`, text.slice(0, 200));
-
-        buffer += text;
+        buffer += chunk.toString();
         const lines = buffer.split("\n");
         buffer = lines.pop() || "";
 
@@ -86,18 +59,15 @@ export function createStreamFromProcess(child: ChildProcess): ReadableStream<Uin
         }
       });
 
-      child.stderr?.on("data", (chunk: Buffer) => {
-        const text = chunk.toString();
-        log("stderr:", text.slice(0, 500));
+      child.stderr?.on("data", () => {
         const errorEvent = JSON.stringify({
           type: "error",
-          message: text,
+          message: "Agent process error",
         });
         controller.enqueue(encoder.encode(errorEvent + "\n"));
       });
 
-      child.on("close", (code) => {
-        log("stream closing, exit code:", code, "remaining buffer:", buffer.length, "bytes");
+      child.on("close", () => {
         if (buffer.trim()) {
           controller.enqueue(encoder.encode(buffer + "\n"));
         }
@@ -105,7 +75,6 @@ export function createStreamFromProcess(child: ChildProcess): ReadableStream<Uin
       });
 
       child.on("error", (err) => {
-        log("stream error:", err.message);
         const errorEvent = JSON.stringify({
           type: "error",
           message: err.message,
@@ -116,7 +85,6 @@ export function createStreamFromProcess(child: ChildProcess): ReadableStream<Uin
     },
 
     cancel() {
-      log("stream cancelled, killing process");
       child.kill("SIGTERM");
     },
   });

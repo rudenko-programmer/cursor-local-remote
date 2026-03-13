@@ -103,24 +103,53 @@ function stripXmlTags(text: string): string {
     .trim();
 }
 
+export interface SessionHistoryResult {
+  messages: ChatMessage[];
+  modifiedAt: number;
+}
+
+function resolveJsonlPath(workspace: string, sessionId: string): string | null {
+  const dir = findTranscriptsDir(workspace);
+  if (!dir) return null;
+
+  const resolvedDir = resolve(dir);
+  const entryPath = resolve(dir, sessionId);
+  if (!entryPath.startsWith(resolvedDir + "/")) return null;
+
+  const flatPath = join(dir, sessionId + ".jsonl");
+
+  if (existsSync(entryPath) && statSync(entryPath).isDirectory()) {
+    return findJsonlFile(entryPath, sessionId);
+  }
+  if (existsSync(flatPath)) {
+    return flatPath;
+  }
+  return null;
+}
+
+export function getSessionModifiedAt(workspace: string, sessionId: string): number {
+  const jsonlPath = resolveJsonlPath(workspace, sessionId);
+  if (!jsonlPath) return 0;
+  try {
+    return statSync(jsonlPath).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 export function readSessionMessages(
   workspace: string,
   sessionId: string
-): ChatMessage[] {
-  const dir = findTranscriptsDir(workspace);
-  if (!dir) return [];
+): SessionHistoryResult {
+  const jsonlPath = resolveJsonlPath(workspace, sessionId);
+  if (!jsonlPath) return { messages: [], modifiedAt: 0 };
 
-  const entryPath = join(dir, sessionId);
-  const flatPath = join(dir, sessionId + ".jsonl");
-
-  let jsonlPath: string | null = null;
-  if (existsSync(entryPath) && statSync(entryPath).isDirectory()) {
-    jsonlPath = findJsonlFile(entryPath, sessionId);
-  } else if (existsSync(flatPath)) {
-    jsonlPath = flatPath;
+  let modifiedAt = 0;
+  try {
+    modifiedAt = statSync(jsonlPath).mtimeMs;
+  } catch {
+    return { messages: [], modifiedAt: 0 };
   }
-
-  if (!jsonlPath) return [];
 
   const messages: ChatMessage[] = [];
   let counter = 0;
@@ -165,5 +194,5 @@ export function readSessionMessages(
     // file read error
   }
 
-  return messages;
+  return { messages, modifiedAt };
 }

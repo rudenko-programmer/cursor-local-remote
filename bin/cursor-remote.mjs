@@ -1,50 +1,67 @@
 #!/usr/bin/env node
 
-import { spawn, execSync } from "child_process";
+import { spawn, execFileSync } from "child_process";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { networkInterfaces } from "os";
 import { existsSync } from "fs";
+import { randomBytes } from "crypto";
 import qrcode from "qrcode-terminal";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
 
 const args = process.argv.slice(2);
-const flags = args.filter((a) => a.startsWith("-"));
-const positional = args.filter((a) => !a.startsWith("-"));
 
-if (flags.includes("--help") || flags.includes("-h")) {
+if (args.includes("--help") || args.includes("-h")) {
   console.log(`
-  cursor-remote - Control Cursor IDE from any device on your network
+  cursor-local-remote - Control Cursor IDE from any device on your network
 
   Usage:
-    cr [workspace] [options]
+    clr [workspace] [options]
 
   Arguments:
     workspace    Path to your project folder (defaults to current directory)
 
   Options:
-    -p, --port   Port to run on (default: 3000)
+    -p, --port   Port to run on (default: 3100)
     --no-open    Don't auto-open the browser
     --no-qr      Don't show QR code in terminal
     -h, --help   Show this help
 
   Examples:
-    cr                          # Start in current folder
-    cr ~/projects/my-app        # Start for a specific project
-    cr . --port 8080            # Use a different port
+    clr                          # Start in current folder
+    clr ~/projects/my-app        # Start for a specific project
+    clr . --port 8080            # Use a different port
 `);
   process.exit(0);
 }
 
+const positional = [];
+let rawPort = process.env.PORT || "3100";
+let noOpen = false;
+let noQr = false;
+
+for (let i = 0; i < args.length; i++) {
+  const a = args[i];
+  if (a === "--port" || a === "-p") {
+    rawPort = args[++i] || rawPort;
+  } else if (a === "--no-open") {
+    noOpen = true;
+  } else if (a === "--no-qr") {
+    noQr = true;
+  } else if (!a.startsWith("-")) {
+    positional.push(a);
+  }
+}
+
+const portNum = parseInt(rawPort, 10);
+if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+  console.error(`  Error: invalid port: ${rawPort}`);
+  process.exit(1);
+}
+const port = String(portNum);
 const workspace = positional[0] ? resolve(positional[0]) : process.cwd();
-const portIdx = flags.indexOf("--port") !== -1 ? flags.indexOf("--port") : flags.indexOf("-p");
-const port = portIdx !== -1 && args[args.indexOf(flags[portIdx]) + 1]
-  ? args[args.indexOf(flags[portIdx]) + 1]
-  : process.env.PORT || "3000";
-const noOpen = flags.includes("--no-open");
-const noQr = flags.includes("--no-qr");
 
 if (!existsSync(workspace)) {
   console.error(`  Error: workspace path does not exist: ${workspace}`);
@@ -67,24 +84,32 @@ const lanIp = getLanIp();
 const localUrl = `http://localhost:${port}`;
 const networkUrl = lanIp ? `http://${lanIp}:${port}` : null;
 
-try {
-  const logo = execSync("npx oh-my-logo@latest \"cursor\\nremote\" nebula --filled --block-font block --color", { stdio: ["ignore", "pipe", "ignore"] });
-  process.stdout.write(logo);
-} catch {
-  // fallback if oh-my-logo is unavailable
-  process.stdout.write("\x1b[36m  cursor remote\x1b[0m\n\n");
-}
-console.log(`  \x1b[2mWorkspace:\x1b[0m  ${workspace}`);
-console.log(`  \x1b[2mLocal:\x1b[0m      ${localUrl}`);
+const authToken = process.env.AUTH_TOKEN || randomBytes(24).toString("hex");
+
+const authUrl = `${localUrl}?token=${authToken}`;
+
+console.log("");
+console.log("\x1b[36m ██████╗██╗     ██████╗ ");
+console.log("██╔════╝██║     ██╔══██╗");
+console.log("██║     ██║     ██████╔╝");
+console.log("██║     ██║     ██╔══██╗");
+console.log("╚██████╗███████╗██║  ██║");
+console.log(" ╚═════╝╚══════╝╚═╝  ╚═╝\x1b[0m");
+console.log(`  \x1b[2mWorkspace:\x1b[0m   ${workspace}`);
+console.log(`  \x1b[2mLocal:\x1b[0m       ${localUrl}`);
 if (networkUrl) {
-  console.log(`  \x1b[2mNetwork:\x1b[0m    \x1b[36m${networkUrl}\x1b[0m`);
+  console.log(`  \x1b[2mNetwork:\x1b[0m     \x1b[36m${networkUrl}\x1b[0m`);
 }
+console.log(`  \x1b[2mAuth token:\x1b[0m  \x1b[33m${authToken}\x1b[0m`);
+console.log(`  \x1b[2mAuth link:\x1b[0m   \x1b[4m\x1b[36m${authUrl}\x1b[0m`);
 console.log("");
 
-if (!noQr && networkUrl) {
+const qrUrl = networkUrl ? `${networkUrl}?token=${authToken}` : null;
+
+if (!noQr && qrUrl) {
   console.log("  \x1b[2mScan to connect from your phone:\x1b[0m");
   console.log("");
-  qrcode.generate(networkUrl, { small: true }, (code) => {
+  qrcode.generate(qrUrl, { small: true }, (code) => {
     const indented = code.split("\n").map((l) => "    " + l).join("\n");
     console.log(indented);
     console.log("");
@@ -101,26 +126,39 @@ if (!noOpen) {
         ? "start"
         : "xdg-open";
     setTimeout(() => {
-      execSync(`${openCmd} ${localUrl}`, { stdio: "ignore" });
+      execFileSync(openCmd, [`${localUrl}?token=${authToken}`], { stdio: "ignore" });
     }, 2000);
   } catch {
     // silently fail if browser can't open
   }
 }
 
-const child = spawn("npx", ["next", "dev", "--hostname", "0.0.0.0", "--port", port], {
+const nextBin = resolve(projectRoot, "node_modules", ".bin", "next");
+const isBuilt = existsSync(resolve(projectRoot, ".next", "BUILD_ID"));
+
+const nextArgs = isBuilt
+  ? ["start", "--hostname", "0.0.0.0", "--port", port]
+  : ["dev", "--hostname", "0.0.0.0", "--port", port];
+
+const child = spawn(nextBin, nextArgs, {
   cwd: projectRoot,
   stdio: ["inherit", "pipe", "pipe"],
   env: {
     ...process.env,
     CURSOR_WORKSPACE: workspace,
     PORT: port,
+    AUTH_TOKEN: authToken,
   },
-  shell: true,
 });
 
-child.stdout.on("data", () => {
-  // suppress Next.js output to keep our clean display
+let ready = false;
+child.stdout.on("data", (data) => {
+  if (ready) return;
+  const text = data.toString();
+  if (text.includes("Ready") || text.includes("ready")) {
+    console.log("  \x1b[32m✓ Ready\x1b[0m");
+    ready = true;
+  }
 });
 
 child.stderr.on("data", (data) => {

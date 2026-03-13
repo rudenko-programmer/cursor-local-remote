@@ -112,9 +112,10 @@ export interface ChatMessage {
 export interface ToolCallInfo {
   id: string;
   callId: string;
-  type: "read" | "write" | "shell" | "other";
+  type: "read" | "write" | "edit" | "shell" | "search" | "other";
   name: string;
   path?: string;
+  command?: string;
   args?: string;
   status: "running" | "completed" | "error";
   result?: string;
@@ -135,7 +136,6 @@ export type AgentMode = "agent" | "ask" | "plan";
 export interface ChatRequest {
   prompt: string;
   sessionId?: string;
-  workspace?: string;
   model?: string;
   mode?: AgentMode;
 }
@@ -144,5 +144,6 @@ export interface NetworkInfo {
   lanIp: string;
   port: number;
   url: string;
+  authUrl: string;
   workspace: string;
 }

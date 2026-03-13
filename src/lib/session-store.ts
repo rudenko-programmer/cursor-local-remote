@@ -1,21 +1,13 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
-
-export interface StoredSession {
-  id: string;
-  title: string;
-  workspace: string;
-  preview: string;
-  createdAt: number;
-  updatedAt: number;
-}
+import type { StoredSession } from "@/lib/types";
 
 interface StoreData {
   sessions: StoredSession[];
 }
 
-const DATA_DIR = join(homedir(), ".cursor-remote");
+const DATA_DIR = join(homedir(), ".cursor-local-remote");
 const STORE_PATH = join(DATA_DIR, "sessions.json");
 
 function ensureDir() {

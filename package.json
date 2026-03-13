@@ -1,26 +1,52 @@
 {
-  "name": "cursor-remote-control",
+  "name": "cursor-local-remote",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "Control Cursor IDE from any device on your local network",
-  "bin": {
-    "cursor-remote": "./bin/cursor-remote.mjs",
-    "cr": "./bin/cursor-remote.mjs"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jonmakinen/cursor-local-remote.git"
   },
+  "keywords": [
+    "cursor",
+    "cursor-ide",
+    "remote",
+    "ai",
+    "agent",
+    "cli",
+    "mobile"
+  ],
+  "bin": {
+    "cursor-local-remote": "./bin/cursor-remote.mjs",
+    "clr": "./bin/cursor-remote.mjs"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    ".next/server/",
+    ".next/static/",
+    ".next/*.json",
+    ".next/BUILD_ID",
+    ".next/package.json",
+    "next.config.ts",
+    "tsconfig.json",
+    "postcss.config.mjs"
+  ],
   "scripts": {
-    "dev": "next dev --hostname 0.0.0.0",
-    "remote": "node bin/cursor-remote.mjs",
+    "dev": "next dev --hostname 0.0.0.0 --port 3100",
     "build": "next build",
-    "start": "next start --hostname 0.0.0.0",
-    "lint": "next lint"
+    "start": "next start --hostname 0.0.0.0 --port 3100",
+    "lint": "next lint",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "next": "^15.3.3",
     "qrcode-terminal": "^0.12.0",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "web-haptics": "^0.0.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.7",
@@ -29,5 +55,8 @@
     "@types/react-dom": "^19.1.5",
     "tailwindcss": "^4.1.7",
     "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=18"
   }
 }

@@ -1,6 +1,7 @@
 import { listSessions, deleteSession } from "@/lib/session-store";
 import { readCursorSessions } from "@/lib/transcript-reader";
 import { getWorkspace } from "@/lib/workspace";
+import { SESSION_ID_RE } from "@/lib/validation";
 import type { StoredSession } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -44,10 +45,16 @@ export async function GET(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-  const { sessionId } = await req.json();
-  if (!sessionId) {
-    return Response.json({ error: "sessionId required" }, { status: 400 });
+  let body: { sessionId?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
-  deleteSession(sessionId);
+
+  if (!body.sessionId || !SESSION_ID_RE.test(body.sessionId)) {
+    return Response.json({ error: "invalid sessionId" }, { status: 400 });
+  }
+  deleteSession(body.sessionId);
   return Response.json({ ok: true });
 }

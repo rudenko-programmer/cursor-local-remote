@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import type { NetworkInfo } from "@/lib/types";
+import { apiFetch } from "@/lib/api-fetch";
 
 interface QrModalProps {
   open: boolean;
@@ -14,7 +15,7 @@ export function QrModal({ open, onClose }: QrModalProps) {
 
   useEffect(() => {
     if (!open) return;
-    fetch("/api/info")
+    apiFetch("/api/info")
       .then((r) => r.json())
       .then(setInfo)
       .catch(() => {});
@@ -39,7 +40,7 @@ export function QrModal({ open, onClose }: QrModalProps) {
         {info ? (
           <>
             <div className="bg-white rounded-lg p-3 inline-block mb-3">
-              <QRCodeSVG value={info.url} size={180} />
+              <QRCodeSVG value={info.authUrl} size={180} />
             </div>
             <p className="font-mono text-[12px] text-text-secondary">{info.url}</p>
           </>

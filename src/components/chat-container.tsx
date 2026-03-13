@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useChat } from "@/hooks/use-chat";
+import { useHaptics } from "@/hooks/use-haptics";
+import { apiFetch } from "@/lib/api-fetch";
 import { MessageList } from "./message-list";
 import { ChatInput } from "./chat-input";
 import { QrModal } from "./qr-modal";
@@ -14,6 +16,7 @@ export function ChatContainer() {
     sessionId,
     isStreaming,
     isLoadingHistory,
+    isWatching,
     model,
     selectedModel,
     selectedMode,
@@ -24,14 +27,18 @@ export function ChatContainer() {
     setSelectedModel,
     setSelectedMode,
     clearChat,
+    stopStreaming,
+    retryLastMessage,
   } = useChat();
 
+  const haptics = useHaptics();
   const [qrOpen, setQrOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [workspace, setWorkspace] = useState<string>("");
+  const prevMsgCountRef = useRef(0);
 
   const fetchWorkspace = useCallback(() => {
-    fetch("/api/info")
+    apiFetch("/api/info")
       .then((r) => r.json())
       .then((data) => setWorkspace(data.workspace || ""))
       .catch(() => {});
@@ -41,6 +48,14 @@ export function ChatContainer() {
     fetchWorkspace();
   }, [fetchWorkspace]);
 
+  useEffect(() => {
+    const assistantMsgs = messages.filter((m) => m.role === "assistant").length;
+    if (assistantMsgs > prevMsgCountRef.current && assistantMsgs > 0) {
+      haptics.tap();
+    }
+    prevMsgCountRef.current = assistantMsgs;
+  }, [messages, haptics]);
+
   const dirName = workspace.split("/").filter(Boolean).pop() || "~";
 
   return (
@@ -48,7 +63,7 @@ export function ChatContainer() {
       <header className="shrink-0 flex items-center justify-between h-11 px-3 border-b border-border">
         <div className="flex items-center gap-2">
           <button
-            onClick={() => setSidebarOpen(true)}
+            onClick={() => { haptics.tap(); setSidebarOpen(true); }}
             className="p-1 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-secondary"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -64,6 +79,12 @@ export function ChatContainer() {
               <span className="text-[11px] text-text-muted">{model}</span>
             </>
           )}
+          {isWatching && (
+            <span className="flex items-center gap-1 text-[11px] text-success">
+              <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+              live
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1">
@@ -73,7 +94,7 @@ export function ChatContainer() {
             </span>
           )}
           <button
-            onClick={() => setQrOpen(true)}
+            onClick={() => { haptics.tap(); setQrOpen(true); }}
             className="p-1 rounded-md hover:bg-bg-hover transition-colors text-text-muted hover:text-text-secondary"
             title="Connect device"
           >
@@ -100,11 +121,15 @@ export function ChatContainer() {
         toolCalls={toolCalls}
         isStreaming={isStreaming}
         isLoadingHistory={isLoadingHistory}
+        isWatching={isWatching}
+        onSelectSession={loadSession}
+        onRetry={retryLastMessage}
       />
 
       <ChatInput
         onSend={(msg) => sendMessage(msg)}
-        disabled={isStreaming}
+        onStop={stopStreaming}
+        isStreaming={isStreaming}
         selectedModel={selectedModel}
         selectedMode={selectedMode}
         onModelChange={setSelectedModel}

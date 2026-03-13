@@ -17,7 +17,7 @@ export function getLanIp(): string | null {
   return null;
 }
 
-export function getNetworkInfo(port: number = 3000) {
+export function getNetworkInfo(port: number = 3100) {
   const lanIp = getLanIp();
   return {
     lanIp: lanIp || "localhost",
