@@ -29,8 +29,6 @@ export function ChatContainer() {
     clearChat,
     stopStreaming,
     retryLastMessage,
-    isNewSession,
-    dismissNewSessionHint,
   } = useChat();
 
   const haptics = useHaptics();
@@ -124,10 +122,8 @@ export function ChatContainer() {
         isStreaming={isStreaming}
         isLoadingHistory={isLoadingHistory}
         isWatching={isWatching}
-        isNewSession={isNewSession}
         onSelectSession={loadSession}
         onRetry={retryLastMessage}
-        onDismissNewSession={dismissNewSessionHint}
       />
 
       <ChatInput

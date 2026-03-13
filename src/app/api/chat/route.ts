@@ -1,7 +1,6 @@
 import { spawnAgent, createStreamFromProcess } from "@/lib/cursor-cli";
 import { getWorkspace } from "@/lib/workspace";
 import { upsertSession } from "@/lib/session-store";
-import { registerInCursorState } from "@/lib/cursor-state";
 import { SESSION_ID_RE } from "@/lib/validation";
 import type { ChatRequest, AgentMode } from "@/lib/types";
 
@@ -16,11 +15,8 @@ function createTappedStream(
   source: ReadableStream<Uint8Array>,
   workspace: string,
   prompt: string,
-  isResume: boolean,
-  mode?: AgentMode,
 ): ReadableStream<Uint8Array> {
   const reader = source.getReader();
-  const encoder = new TextEncoder();
   let captured = false;
 
   return new ReadableStream({
@@ -41,12 +37,6 @@ function createTappedStream(
             if (event.type === "system" && event.subtype === "init" && event.session_id) {
               upsertSession(event.session_id, workspace, prompt);
               captured = true;
-
-              if (!isResume) {
-                const synced = registerInCursorState(event.session_id, workspace, prompt, mode);
-                const meta = JSON.stringify({ type: "meta", isNewSession: true, synced }) + "\n";
-                controller.enqueue(encoder.encode(meta));
-              }
             }
           } catch {
             // non-json line, skip
@@ -108,8 +98,7 @@ export async function POST(req: Request) {
     });
 
     const rawStream = createStreamFromProcess(child);
-    const isResume = !!body.sessionId;
-    const stream = createTappedStream(rawStream, workspace, body.prompt, isResume, body.mode);
+    const stream = createTappedStream(rawStream, workspace, body.prompt);
 
     return new Response(stream, {
       headers: {

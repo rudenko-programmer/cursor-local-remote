@@ -13,10 +13,8 @@ interface MessageListProps {
   isStreaming: boolean;
   isLoadingHistory?: boolean;
   isWatching?: boolean;
-  isNewSession?: boolean;
   onSelectSession?: (id: string) => void;
   onRetry?: () => void;
-  onDismissNewSession?: () => void;
 }
 
 interface TimelineItem {
@@ -76,10 +74,8 @@ export function MessageList({
   isStreaming,
   isLoadingHistory,
   isWatching,
-  isNewSession,
   onSelectSession,
   onRetry,
-  onDismissNewSession,
 }: MessageListProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const endRef = useRef<HTMLDivElement>(null);
@@ -106,12 +102,6 @@ export function MessageList({
     const id = setTimeout(() => { isScrollingRef.current = false; }, 150);
     return () => clearTimeout(id);
   }, [messages, toolCalls, autoScroll]);
-
-  useEffect(() => {
-    if (!isNewSession || !onDismissNewSession) return;
-    const id = setTimeout(onDismissNewSession, 15000);
-    return () => clearTimeout(id);
-  }, [isNewSession, onDismissNewSession]);
 
   const timeline: TimelineItem[] = [
     ...messages.map(
@@ -166,22 +156,6 @@ export function MessageList({
         onScroll={handleScroll}
         className="h-full overflow-y-auto px-4 max-w-3xl mx-auto w-full"
       >
-        {isNewSession && (
-          <div className="mx-auto mt-3 mb-1 flex items-center justify-between gap-2 rounded-lg border border-border bg-bg-elevated px-3 py-2 text-[12px] text-text-secondary">
-            <span>Session synced — reload Cursor to see it in the sidebar</span>
-            <button
-              onClick={onDismissNewSession}
-              className="shrink-0 rounded p-0.5 hover:bg-bg-hover text-text-muted hover:text-text transition-colors"
-              aria-label="Dismiss"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="18" y1="6" x2="6" y2="18" />
-                <line x1="6" y1="6" x2="18" y2="18" />
-              </svg>
-            </button>
-          </div>
-        )}
-
         <div className="divide-y divide-border/50">
           {timeline.map((item) => {
             if (item.kind === "message" && item.message) {
