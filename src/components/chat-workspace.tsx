@@ -191,6 +191,27 @@ export function ChatWorkspace() {
     });
   }, [activeId]);
 
+  const [workspaceTerminals, setWorkspaceTerminals] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    const fetchCounts = () => {
+      apiFetch("/api/terminal")
+        .then((r) => r.json())
+        .then((data) => {
+          const all: { cwd: string; running: boolean }[] = data.terminals || [];
+          const counts: Record<string, number> = {};
+          for (const t of all) {
+            if (t.running) counts[t.cwd] = (counts[t.cwd] || 0) + 1;
+          }
+          setWorkspaceTerminals(counts);
+        })
+        .catch(() => {});
+    };
+    fetchCounts();
+    const id = setInterval(fetchCounts, 10_000);
+    return () => clearInterval(id);
+  }, []);
+
   const currentSessionId = instances.find((i) => i.id === activeId)?.sessionId ?? null;
 
   return (
@@ -222,6 +243,7 @@ export function ChatWorkspace() {
         onNewSession={handleNewSession}
         onWorkspaceChange={handleWorkspaceChange}
         activeStatuses={activeStatuses}
+        workspaceTerminals={workspaceTerminals}
       />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} onDefaultModelChange={setDefaultModel} />

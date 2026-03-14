@@ -11,7 +11,6 @@ import { CloseIcon, PlusIcon, Spinner, StopIcon, TrashIcon } from "./icons";
 
 interface TerminalInfo {
   id: string;
-  command: string;
   cwd: string;
   running: boolean;
   exitCode: number | null;
@@ -20,7 +19,7 @@ interface TerminalInfo {
 
 interface TerminalTab {
   id: string;
-  command: string;
+  label: string;
   running: boolean;
   exitCode: number | null;
 }
@@ -47,12 +46,15 @@ const XTERM_THEME = {
   selectionBackground: "#ffffff30",
 };
 
+function cwdLabel(cwd: string): string {
+  return cwd.split("/").filter(Boolean).pop() || "~";
+}
+
 export function TerminalPanel({ open, onClose, workspace, onCountChange }: TerminalPanelProps) {
   const [tabs, setTabs] = useState<TerminalTab[]>([]);
   const [activeTab, setActiveTab] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [spawning, setSpawning] = useState(false);
-  const [newMode, setNewMode] = useState(false);
   const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
   const xtermsRef = useRef<Map<string, XtermEntry>>(new Map());
   const containerRefsRef = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -96,7 +98,7 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
       theme: XTERM_THEME,
       fontSize: 13,
       fontFamily: '"SF Mono", "Fira Code", Menlo, Consolas, monospace',
-      cursorBlink: false,
+      cursorBlink: true,
       scrollback: 5000,
       convertEol: true,
       disableStdin: true,
@@ -153,6 +155,27 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
     };
   }, [getOrCreateXterm]);
 
+  const prevWorkspaceRef = useRef(workspace);
+
+  useEffect(() => {
+    if (prevWorkspaceRef.current !== workspace) {
+      prevWorkspaceRef.current = workspace;
+      loadedRef.current = false;
+
+      for (const es of eventSourcesRef.current.values()) es.close();
+      eventSourcesRef.current.clear();
+      for (const entry of xtermsRef.current.values()) {
+        entry.disposed = true;
+        entry.term.dispose();
+      }
+      xtermsRef.current.clear();
+      containerRefsRef.current.clear();
+      setTabs([]);
+      setActiveTab(null);
+      setInput("");
+    }
+  }, [workspace]);
+
   useEffect(() => {
     if (!open || !xtermReady) return;
     if (loadedRef.current) return;
@@ -166,7 +189,7 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
         if (existing.length === 0) return;
         const newTabs = existing.map((t) => ({
           id: t.id,
-          command: t.command,
+          label: cwdLabel(t.cwd),
           running: t.running,
           exitCode: t.exitCode,
         }));
@@ -219,25 +242,36 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
 
   const current = tabs.find((t) => t.id === activeTab);
   const isRunning = current?.running ?? false;
-  const wantsSpawn = newMode || !isRunning;
 
-  const handleSpawn = useCallback(async (cmd: string) => {
-    if (!cmd.trim()) return;
+  const cleanupTerminal = useCallback((id: string) => {
+    const es = eventSourcesRef.current.get(id);
+    if (es) { es.close(); eventSourcesRef.current.delete(id); }
+    const entry = xtermsRef.current.get(id);
+    if (entry) { entry.disposed = true; entry.term.dispose(); xtermsRef.current.delete(id); }
+    containerRefsRef.current.delete(id);
+    apiFetch("/api/terminal", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, remove: true }),
+    }).catch(() => {});
+  }, []);
+
+  const handleNewShell = useCallback(async () => {
     setSpawning(true);
     try {
       const res = await apiFetch("/api/terminal", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ command: cmd.trim(), cwd: workspace }),
+        body: JSON.stringify({ cwd: workspace }),
       });
       const data = await res.json();
-      const tab: TerminalTab = { id: data.id, command: cmd.trim(), running: true, exitCode: null };
+      const label = cwdLabel(data.cwd || workspace || "~");
+      const tab: TerminalTab = { id: data.id, label, running: true, exitCode: null };
       setTabs((prev) => [...prev, tab]);
       setActiveTab(data.id);
-      setInput("");
-      setNewMode(false);
       connectStream(data.id);
       haptics.send();
+      setTimeout(() => inputRef.current?.focus(), 50);
     } catch {
       haptics.error();
     } finally {
@@ -256,19 +290,16 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
   }, [activeTab]);
 
   const handleSubmit = useCallback(() => {
-    if (wantsSpawn) {
-      handleSpawn(input);
-    } else {
-      handleSendStdin(input);
-    }
-  }, [input, wantsSpawn, handleSendStdin, handleSpawn]);
+    if (!current || !isRunning) return;
+    handleSendStdin(input);
+  }, [input, current, isRunning, handleSendStdin]);
 
   const handleCtrlC = useCallback(async () => {
     if (!activeTab) return;
-    await apiFetch("/api/terminal", {
-      method: "DELETE",
+    await apiFetch("/api/terminal/input", {
+      method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: activeTab, signal: "SIGINT" }),
+      body: JSON.stringify({ id: activeTab, data: "\x03" }),
     }).catch(() => {});
     haptics.tap();
   }, [activeTab, haptics]);
@@ -283,23 +314,14 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
   }, [haptics]);
 
   const handleRemove = useCallback((id: string) => {
-    const es = eventSourcesRef.current.get(id);
-    if (es) { es.close(); eventSourcesRef.current.delete(id); }
-    const entry = xtermsRef.current.get(id);
-    if (entry) { entry.disposed = true; entry.term.dispose(); xtermsRef.current.delete(id); }
-    containerRefsRef.current.delete(id);
-    apiFetch("/api/terminal", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, remove: true }),
-    }).catch(() => {});
+    cleanupTerminal(id);
     setTabs((prev) => {
       const next = prev.filter((t) => t.id !== id);
       if (activeTab === id) setActiveTab(next[0]?.id ?? null);
       return next;
     });
     haptics.tap();
-  }, [activeTab, haptics]);
+  }, [activeTab, haptics, cleanupTerminal]);
 
   if (!open) return null;
 
@@ -318,11 +340,12 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
           </div>
           <div className="flex items-center gap-0.5">
             <button
-              onClick={() => { setNewMode(true); setTimeout(() => inputRef.current?.focus(), 0); }}
-              className={`p-1.5 rounded-md transition-colors ${newMode ? "bg-bg-active text-text-secondary" : "text-text-muted hover:text-text-secondary hover:bg-bg-hover"}`}
+              onClick={handleNewShell}
+              disabled={spawning}
+              className="p-1.5 rounded-md transition-colors text-text-muted hover:text-text-secondary hover:bg-bg-hover disabled:opacity-40"
               aria-label="New terminal"
             >
-              <PlusIcon size={13} />
+              {spawning ? <Spinner className="w-3.5 h-3.5" /> : <PlusIcon size={13} />}
             </button>
             <button
               onClick={onClose}
@@ -337,18 +360,18 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
         {/* Tabs */}
         {tabs.length > 0 && (
           <div className="shrink-0 flex items-center gap-0.5 px-2 py-1 border-b border-border overflow-x-auto">
-            {tabs.map((t) => (
+            {tabs.map((t, i) => (
               <button
                 key={t.id}
-                onClick={() => { setActiveTab(t.id); setNewMode(false); }}
+                onClick={() => setActiveTab(t.id)}
                 className={`group flex items-center gap-1.5 pl-2 pr-1 py-1.5 rounded-md text-[11px] font-mono transition-colors shrink-0 max-w-[150px] ${
-                  t.id === activeTab && !newMode
+                  t.id === activeTab
                     ? "bg-bg-active text-text"
                     : "text-text-muted hover:text-text-secondary hover:bg-bg-hover"
                 }`}
               >
                 <span className={`shrink-0 w-1.5 h-1.5 rounded-full ${t.running ? "bg-success" : t.exitCode === 0 ? "bg-text-muted/30" : "bg-error/60"}`} />
-                <span className="truncate">{t.command}</span>
+                <span className="truncate">{t.label}{tabs.filter((x) => x.label === t.label).length > 1 ? ` ${i + 1}` : ""}</span>
                 <span
                   role="button"
                   tabIndex={0}
@@ -367,7 +390,14 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
         <div ref={wrapperRef} className="flex-1 relative bg-bg overflow-hidden">
           {tabs.length === 0 && (
             <div className="absolute inset-0 flex items-center justify-center">
-              <p className="text-text-muted text-[12px]">Type a command below to get started</p>
+              <button
+                onClick={handleNewShell}
+                disabled={spawning}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg text-[13px] text-text-muted hover:text-text-secondary bg-bg-surface hover:bg-bg-hover transition-colors disabled:opacity-40"
+              >
+                {spawning ? <Spinner className="w-3.5 h-3.5" /> : <PlusIcon size={13} />}
+                New terminal
+              </button>
             </div>
           )}
           {tabs.map((t) => (
@@ -380,54 +410,43 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
                 }
               }}
               className="absolute inset-0"
-              style={{ display: t.id === activeTab && !newMode ? "block" : "none" }}
+              style={{ display: t.id === activeTab ? "block" : "none" }}
             />
           ))}
         </div>
 
         {/* Bottom bar */}
-        <div className="shrink-0 border-t border-border bg-bg-elevated">
-          {current && !current.running && !newMode && (
-            <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
-              <span className="text-[11px] text-text-muted">
-                exited{current.exitCode !== 0 && current.exitCode !== null ? ` (${current.exitCode})` : ""}
-              </span>
-              <button
-                onClick={() => handleRemove(current.id)}
-                className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors"
-              >
-                <TrashIcon size={10} />
-                Remove
-              </button>
-            </div>
-          )}
-
-          <form
-            onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}
-            className="flex items-center gap-2 px-3 py-2.5"
-          >
-            <span className="text-[13px] font-mono shrink-0 text-text-muted">{">"}</span>
-            <input
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Escape" && newMode) { setNewMode(false); setInput(""); } }}
-              placeholder={wantsSpawn ? "Run a command..." : "Send input..."}
-              className="flex-1 min-w-0 bg-transparent text-[13px] font-mono text-text placeholder:text-text-muted/50 focus:outline-none"
-              autoFocus
-            />
-            {spawning && <Spinner className="w-3.5 h-3.5 text-text-muted" />}
-            {newMode && isRunning && (
-              <button
-                type="button"
-                onClick={() => { setNewMode(false); setInput(""); }}
-                className="shrink-0 px-2 py-1 rounded-md text-[11px] text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors"
-              >
-                Cancel
-              </button>
+        {current && (
+          <div className="shrink-0 border-t border-border bg-bg-elevated">
+            {!isRunning && (
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-border">
+                <span className="text-[11px] text-text-muted">
+                  exited{current.exitCode !== 0 && current.exitCode !== null ? ` (${current.exitCode})` : ""}
+                </span>
+                <button
+                  onClick={() => handleRemove(current.id)}
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] text-text-muted hover:text-text-secondary hover:bg-bg-hover transition-colors"
+                >
+                  <TrashIcon size={10} />
+                  Remove
+                </button>
+              </div>
             )}
-            {isRunning && !newMode && (
-              <>
+
+            {isRunning && (
+              <form
+                onSubmit={(e) => { e.preventDefault(); handleSubmit(); }}
+                className="flex items-center gap-2 px-3 py-2.5"
+              >
+                <span className="text-[13px] font-mono shrink-0 text-text-muted">{">"}</span>
+                <input
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  placeholder="Type a command..."
+                  className="flex-1 min-w-0 bg-transparent text-[13px] font-mono text-text placeholder:text-text-muted/50 focus:outline-none"
+                  autoFocus
+                />
                 <button
                   type="button"
                   onClick={handleCtrlC}
@@ -437,16 +456,16 @@ export function TerminalPanel({ open, onClose, workspace, onCountChange }: Termi
                 </button>
                 <button
                   type="button"
-                  onClick={() => handleKill(current!.id)}
+                  onClick={() => handleKill(current.id)}
                   className="shrink-0 p-1.5 rounded-md text-error/50 hover:text-error hover:bg-error/10 transition-colors"
                   aria-label="Kill process"
                 >
                   <StopIcon size={12} />
                 </button>
-              </>
+              </form>
             )}
-          </form>
-        </div>
+          </div>
+        )}
 
       </div>
     </>

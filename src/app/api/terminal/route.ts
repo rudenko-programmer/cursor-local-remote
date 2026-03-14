@@ -9,17 +9,14 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const body = await parseJsonBody<{ command?: string; cwd?: string }>(req);
+  const body = await parseJsonBody<{ cwd?: string }>(req);
   if (body instanceof Response) return body;
-
-  const command = body.command?.trim();
-  if (!command) return badRequest("command is required");
 
   const cwd = body.cwd || getWorkspace();
 
   try {
-    const term = spawnTerminal(command, cwd);
-    return Response.json({ id: term.id, command: term.command, cwd: term.cwd });
+    const term = spawnTerminal(cwd);
+    return Response.json({ id: term.id, cwd: term.cwd });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "Failed to spawn terminal";
     return serverError(msg);

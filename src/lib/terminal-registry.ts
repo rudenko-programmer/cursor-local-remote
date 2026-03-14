@@ -6,7 +6,6 @@ const MAX_OUTPUT_BYTES = 512 * 1024;
 interface TerminalProcess {
   id: string;
   child: ChildProcess;
-  command: string;
   cwd: string;
   output: string;
   running: boolean;
@@ -33,17 +32,16 @@ function cleanEnv(): NodeJS.ProcessEnv {
     }
   }
   base.TERM = "xterm-256color";
+  base.COLUMNS = "120";
+  base.LINES = "30";
   return base;
 }
 
-export function spawnTerminal(command: string, cwd: string): TerminalProcess {
+export function spawnTerminal(cwd: string): TerminalProcess {
   const id = randomUUID().slice(0, 8);
   const shell = process.env.SHELL || "/bin/sh";
-  const rcSource = shell.endsWith("/zsh")
-    ? '[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null; '
-    : '[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null; ';
 
-  const child = spawn(shell, ["-c", rcSource + command], {
+  const child = spawn(shell, ["-i"], {
     cwd,
     stdio: ["pipe", "pipe", "pipe"],
     env: cleanEnv(),
@@ -53,7 +51,6 @@ export function spawnTerminal(command: string, cwd: string): TerminalProcess {
   const entry: TerminalProcess = {
     id,
     child,
-    command,
     cwd,
     output: "",
     running: true,
@@ -94,10 +91,9 @@ export function getTerminal(id: string): TerminalProcess | undefined {
   return terminals.get(id);
 }
 
-export function listTerminals(): { id: string; command: string; cwd: string; running: boolean; exitCode: number | null; startedAt: number }[] {
+export function listTerminals(): { id: string; cwd: string; running: boolean; exitCode: number | null; startedAt: number }[] {
   return Array.from(terminals.values()).map((t) => ({
     id: t.id,
-    command: t.command,
     cwd: t.cwd,
     running: t.running,
     exitCode: t.exitCode,

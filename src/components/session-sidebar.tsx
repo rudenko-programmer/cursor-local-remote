@@ -15,6 +15,7 @@ interface SessionSidebarProps {
   onNewSession: (workspace?: string) => void;
   onWorkspaceChange?: (workspace: string | null) => void;
   activeStatuses?: Record<string, "streaming" | "idle">;
+  workspaceTerminals?: Record<string, number>;
 }
 
 function StatusIndicator({ status }: { status: "streaming" | "idle" }) {
@@ -151,6 +152,7 @@ export function SessionSidebar({
   onNewSession,
   onWorkspaceChange,
   activeStatuses = {},
+  workspaceTerminals = {},
 }: SessionSidebarProps) {
   const [sessions, setSessions] = useState<StoredSession[]>([]);
   const [loading, setLoading] = useState(false);
@@ -359,6 +361,7 @@ export function SessionSidebar({
                 const proj = projects.find((p) => p.path === path);
                 const name = proj?.name || path.split("/").pop() || path;
                 const isActive = selectedProject === path;
+                const termCount = workspaceTerminals[path] || 0;
                 return (
                   <button
                     key={path}
@@ -371,6 +374,9 @@ export function SessionSidebar({
                   >
                     <StarIcon size={10} filled className="shrink-0 text-text-secondary" />
                     <span className="truncate">{name}</span>
+                    {termCount > 0 && (
+                      <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-success" />
+                    )}
                   </button>
                 );
               })}
@@ -403,32 +409,40 @@ export function SessionSidebar({
                     All projects
                   </button>
                   <div className="h-px bg-border mx-2 my-1" />
-                  {projects.map((p) => (
-                    <button
-                      key={p.key}
-                      onClick={() => handleProjectSelect(p.path)}
-                      className={`w-full text-left px-3 py-1.5 text-[12px] transition-colors flex items-center gap-2 ${
-                        selectedProject === p.path
-                          ? "text-text bg-bg-active"
-                          : "text-text-secondary hover:bg-bg-hover hover:text-text"
-                      }`}
-                    >
-                      <div className="flex-1 min-w-0">
-                        <span className="block truncate">{p.name}</span>
-                        <span className="block text-[10px] text-text-muted font-mono truncate">{p.path}</span>
-                      </div>
-                      <span
-                        onClick={(e) => toggleStar(e, p.path)}
-                        className={`shrink-0 p-0.5 rounded hover:bg-bg-active transition-colors ${
-                          starred.includes(p.path) ? "text-text-secondary" : "text-text-muted/30 hover:text-text-muted"
+                  {projects.map((p) => {
+                    const termCount = workspaceTerminals[p.path] || 0;
+                    return (
+                      <button
+                        key={p.key}
+                        onClick={() => handleProjectSelect(p.path)}
+                        className={`w-full text-left px-3 py-1.5 text-[12px] transition-colors flex items-center gap-2 ${
+                          selectedProject === p.path
+                            ? "text-text bg-bg-active"
+                            : "text-text-secondary hover:bg-bg-hover hover:text-text"
                         }`}
-                        role="button"
-                        aria-label={starred.includes(p.path) ? "Unstar project" : "Star project"}
                       >
-                        <StarIcon size={12} filled={starred.includes(p.path)} />
-                      </span>
-                    </button>
-                  ))}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="truncate">{p.name}</span>
+                            {termCount > 0 && (
+                              <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-success" />
+                            )}
+                          </div>
+                          <span className="block text-[10px] text-text-muted font-mono truncate">{p.path}</span>
+                        </div>
+                        <span
+                          onClick={(e) => toggleStar(e, p.path)}
+                          className={`shrink-0 p-0.5 rounded hover:bg-bg-active transition-colors ${
+                            starred.includes(p.path) ? "text-text-secondary" : "text-text-muted/30 hover:text-text-muted"
+                          }`}
+                          role="button"
+                          aria-label={starred.includes(p.path) ? "Unstar project" : "Star project"}
+                        >
+                          <StarIcon size={12} filled={starred.includes(p.path)} />
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </>
             )}
