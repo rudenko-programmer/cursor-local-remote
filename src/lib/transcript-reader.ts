@@ -319,12 +319,17 @@ export function parseLiveEvents(
     }
 
     if (text.trim()) {
-      messages.push({
-        id: `${sessionId}-live-${counter.n++}`,
-        role: role as "user" | "assistant",
-        content: text,
-        timestamp: baseTimestamp + counter.n,
-      });
+      const prev = messages[messages.length - 1];
+      if (prev && prev.role === role) {
+        prev.content += text;
+      } else {
+        messages.push({
+          id: `${sessionId}-live-${counter.n++}`,
+          role: role as "user" | "assistant",
+          content: text,
+          timestamp: baseTimestamp + counter.n,
+        });
+      }
     }
 
     if (role === "assistant") {
@@ -371,12 +376,17 @@ export async function readSessionMessages(workspace: string, sessionId: string):
     }
 
     if (text.trim()) {
-      messages.push({
-        id: `${sessionId}-${counter.n++}`,
-        role: role as "user" | "assistant",
-        content: text,
-        timestamp: baseTimestamp + counter.n,
-      });
+      const prev = messages[messages.length - 1];
+      if (prev && prev.role === role) {
+        prev.content += text;
+      } else {
+        messages.push({
+          id: `${sessionId}-${counter.n++}`,
+          role: role as "user" | "assistant",
+          content: text,
+          timestamp: baseTimestamp + counter.n,
+        });
+      }
     }
 
     if (role === "assistant") {

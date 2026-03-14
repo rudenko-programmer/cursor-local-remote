@@ -6,7 +6,7 @@ import { registerProcess, promoteToSessionId, pushLiveEvent, setProcessExitHook 
 import { chatRequestSchema, parseBody } from "@/lib/validation";
 import { badRequest, serverError, safeErrorMessage, parseJsonBody } from "@/lib/errors";
 import { AGENT_INIT_TIMEOUT_MS } from "@/lib/constants";
-import { notifyAgentComplete } from "@/lib/ntfy";
+import { notifyAgentComplete } from "@/lib/webhooks";
 import type { ChatRequest } from "@/lib/types";
 
 export const dynamic = "force-dynamic";

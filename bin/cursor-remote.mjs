@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 
 import { spawn, execFileSync } from "child_process";
-import { resolve, dirname } from "path";
+import { resolve, dirname, join, sep } from "path";
 import { fileURLToPath } from "url";
-import { networkInterfaces } from "os";
-import { existsSync } from "fs";
+import { networkInterfaces, homedir } from "os";
+import { existsSync, readFileSync, readdirSync, statSync } from "fs";
 import { randomInt } from "crypto";
 import { createServer } from "net";
+import http from "http";
 import qrcode from "qrcode-terminal";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -44,7 +45,117 @@ function generateToken() {
   return `${a}-${b}`;
 }
 
+const MAX_STATUS_SCAN = 20;
+
+function probeClr(port) {
+  return new Promise((resolve) => {
+    const req = http.get(`http://127.0.0.1:${port}/api/info`, { timeout: 800 }, (res) => {
+      let body = "";
+      res.on("data", (d) => (body += d));
+      res.on("end", () => {
+        try {
+          const data = JSON.parse(body);
+          resolve({ port, workspace: data.workspace || "unknown", url: `http://127.0.0.1:${port}` });
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    req.on("error", () => resolve(null));
+    req.on("timeout", () => { req.destroy(); resolve(null); });
+  });
+}
+
+function projectKeyToWorkspace(key) {
+  const parts = key.split("-");
+  let path = sep + parts[0];
+  for (let i = 1; i < parts.length; i++) {
+    const withSlash = path + sep + parts[i];
+    if (existsSync(withSlash) && statSync(withSlash).isDirectory()) {
+      path = withSlash;
+    } else {
+      path = path + "-" + parts[i];
+    }
+  }
+  return existsSync(path) ? path : null;
+}
+
+function discoverProjects() {
+  const cursorDir = join(homedir(), ".cursor", "projects");
+  const projects = [];
+  try {
+    const entries = readdirSync(cursorDir);
+    for (const entry of entries) {
+      if (!/^[A-Z]/.test(entry)) continue;
+      const transcripts = join(cursorDir, entry, "agent-transcripts");
+      if (!existsSync(transcripts)) continue;
+      const ws = projectKeyToWorkspace(entry);
+      if (!ws) continue;
+      const name = ws.split(sep).pop() || ws;
+      projects.push({ name, path: ws });
+    }
+  } catch {
+    // cursor projects dir doesn't exist
+  }
+  return projects.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 const args = process.argv.slice(2);
+
+if (args.includes("--version") || args.includes("-V")) {
+  const pkg = JSON.parse(readFileSync(resolve(projectRoot, "package.json"), "utf8"));
+  console.log(pkg.version);
+  process.exit(0);
+}
+
+if (args.includes("--status")) {
+  const portStart = parseInt(process.env.PORT || "3100", 10);
+  const portEnd = portStart + MAX_STATUS_SCAN;
+  console.log(`\n  Checking ports ${portStart}-${portEnd - 1} for running CLR instances...\n`);
+  let found = 0;
+  const checks = [];
+  for (let p = portStart; p < portEnd; p++) {
+    checks.push(probeClr(p));
+  }
+  const results = await Promise.all(checks);
+  for (const r of results) {
+    if (!r) continue;
+    found++;
+    console.log(`  \x1b[32m●\x1b[0m  Port ${r.port}  \x1b[2m→\x1b[0m  ${r.workspace}`);
+    console.log(`     \x1b[2m${r.url}\x1b[0m`);
+  }
+  if (found === 0) {
+    console.log("  \x1b[2mNo running CLR instances found\x1b[0m");
+  }
+  console.log("");
+  process.exit(0);
+}
+
+if (args.includes("--list") || args.includes("-l")) {
+  const projects = discoverProjects();
+  if (projects.length === 0) {
+    console.log("\n  \x1b[2mNo Cursor projects found\x1b[0m\n");
+  } else {
+    console.log(`\n  Found ${projects.length} project${projects.length === 1 ? "" : "s"}:\n`);
+    for (const p of projects) {
+      console.log(`  \x1b[2m•\x1b[0m  ${p.name}  \x1b[2m→\x1b[0m  ${p.path}`);
+    }
+    console.log("");
+  }
+  process.exit(0);
+}
+
+if (args.includes("--update") || args.includes("-u")) {
+  console.log("  Updating cursor-local-remote...\n");
+  try {
+    execFileSync("npm", ["install", "-g", "cursor-local-remote@latest"], { stdio: "inherit" });
+    console.log("\n  \x1b[32m✓ Updated successfully\x1b[0m");
+  } catch {
+    console.error("\n  \x1b[31m✗ Update failed\x1b[0m");
+    process.exit(1);
+  }
+  process.exit(0);
+}
 
 if (args.includes("--help") || args.includes("-h")) {
   console.log(`
@@ -57,19 +168,30 @@ if (args.includes("--help") || args.includes("-h")) {
     workspace    Path to your project folder (defaults to current directory)
 
   Options:
-    -p, --port   Port to run on (default: 3100)
-    --no-open    Don't auto-open the browser
-    --no-qr      Don't show QR code in terminal
-    --no-trust   Disable workspace trust (agent will ask before actions)
+    -p, --port     Port to run on (default: 3100)
+    -t, --token    Set auth token (otherwise random or AUTH_TOKEN env)
+    --host         Bind to specific host/IP (default: 0.0.0.0)
+    --no-open      Don't auto-open the browser
+    --no-qr        Don't show QR code in terminal
+    --no-trust     Disable workspace trust (agent will ask before actions)
     -v, --verbose  Show all server and agent output
-    -h, --help   Show this help
+
+  Commands:
+    -l, --list     List discovered Cursor projects
+    --status       Check if CLR is already running
+    -u, --update   Update to the latest version
+    -V, --version  Show version number
+    -h, --help     Show this help
 
   Examples:
     clr                          # Start in current folder
     clr ~/projects/my-app        # Start for a specific project
     clr . --port 8080            # Use a different port
+    clr --token my-secret        # Use a fixed auth token
+    clr --host 127.0.0.1         # Bind to localhost only
     clr --no-trust               # Require agent to ask before actions
-    clr -v                       # Verbose output for debugging
+    clr --status                 # Check for running instances
+    clr --list                   # Show all known projects
 `);
   process.exit(0);
 }
@@ -80,11 +202,17 @@ let noOpen = false;
 let noQr = false;
 let verbose = false;
 let trust = process.env.CURSOR_TRUST !== "0";
+let customToken = null;
+let hostname = "0.0.0.0";
 
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--port" || a === "-p") {
     rawPort = args[++i] || rawPort;
+  } else if (a === "--token" || a === "-t") {
+    customToken = args[++i] || null;
+  } else if (a === "--host") {
+    hostname = args[++i] || hostname;
   } else if (a === "--no-open") {
     noOpen = true;
   } else if (a === "--no-qr") {
@@ -118,7 +246,7 @@ function isPortAvailable(port) {
   return new Promise((resolve) => {
     const srv = createServer();
     srv.once("error", () => resolve(false));
-    srv.listen(port, "0.0.0.0", () => {
+    srv.listen(port, hostname, () => {
       srv.close(() => resolve(true));
     });
   });
@@ -156,10 +284,11 @@ if (availablePort !== portNum) {
 const port = String(availablePort);
 
 const lanIp = getLanIp();
+const isLocalOnly = hostname === "127.0.0.1" || hostname === "localhost";
 const localUrl = `http://localhost:${port}`;
-const networkUrl = lanIp ? `http://${lanIp}:${port}` : null;
+const networkUrl = !isLocalOnly && lanIp ? `http://${lanIp}:${port}` : null;
 
-const authToken = process.env.AUTH_TOKEN || generateToken();
+const authToken = customToken || process.env.AUTH_TOKEN || generateToken();
 
 const authUrl = `${localUrl}?token=${authToken}`;
 
@@ -214,8 +343,8 @@ const nextBin = resolve(projectRoot, "node_modules", ".bin", "next");
 const isBuilt = existsSync(resolve(projectRoot, ".next", "BUILD_ID"));
 
 const nextArgs = isBuilt
-  ? ["start", "--hostname", "0.0.0.0", "--port", port]
-  : ["dev", "--hostname", "0.0.0.0", "--port", port];
+  ? ["start", "--hostname", hostname, "--port", port]
+  : ["dev", "--hostname", hostname, "--port", port];
 
 const child = spawn(nextBin, nextArgs, {
   cwd: projectRoot,

@@ -1,4 +1,5 @@
 import { killAllProcesses } from "@/lib/process-registry";
+import { killAllTerminals } from "@/lib/terminal-registry";
 
 let registered = false;
 
@@ -8,6 +9,7 @@ export function registerShutdownHandler(): void {
 
   const handler = () => {
     killAllProcesses();
+    killAllTerminals();
     process.exit(0);
   };
 

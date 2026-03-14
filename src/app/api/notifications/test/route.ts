@@ -1,4 +1,4 @@
-import { getWebhookUrl, sendWebhook } from "@/lib/ntfy";
+import { getWebhookUrl, sendWebhook } from "@/lib/webhooks";
 import { badRequest, serverError } from "@/lib/errors";
 
 export const dynamic = "force-dynamic";

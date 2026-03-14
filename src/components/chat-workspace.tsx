@@ -31,17 +31,21 @@ function makeInstance(initialSessionId?: string, initialWorkspace?: string): Cha
   };
 }
 
-function getHashSessionId(): string | null {
-  if (typeof window === "undefined") return null;
+function getHashParams(): { sessionId: string | null; workspace: string | null } {
+  if (typeof window === "undefined") return { sessionId: null, workspace: null };
   const hash = window.location.hash;
-  const match = hash.match(/session=([a-f0-9-]+)/i);
-  return match?.[1] ?? null;
+  const sessionMatch = hash.match(/session=([a-f0-9-]+)/i);
+  const workspaceMatch = hash.match(/workspace=([^&]+)/);
+  return {
+    sessionId: sessionMatch?.[1] ?? null,
+    workspace: workspaceMatch ? decodeURIComponent(workspaceMatch[1]) : null,
+  };
 }
 
 export function ChatWorkspace() {
   const [instances, setInstances] = useState<ChatInstance[]>(() => {
-    const hashSession = getHashSessionId();
-    return [makeInstance(hashSession ?? undefined)];
+    const { sessionId: hashSession, workspace: hashWorkspace } = getHashParams();
+    return [makeInstance(hashSession ?? undefined, hashWorkspace ?? undefined)];
   });
   const [activeId, setActiveId] = useState<string>(() => instances[0].id);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -177,6 +181,16 @@ export function ChatWorkspace() {
     });
   }, []);
 
+  const handleWorkspaceChange = useCallback((workspace: string | null) => {
+    const ws = workspace ?? undefined;
+    setInstances((prev) => {
+      const current = prev.find((i) => i.id === activeId);
+      if (!current || current.sessionId || current.isStreaming) return prev;
+      if (current.initialWorkspace === ws) return prev;
+      return prev.map((i) => (i.id === activeId ? { ...i, initialWorkspace: ws } : i));
+    });
+  }, [activeId]);
+
   const currentSessionId = instances.find((i) => i.id === activeId)?.sessionId ?? null;
 
   return (
@@ -206,6 +220,7 @@ export function ChatWorkspace() {
         currentSessionId={currentSessionId}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
+        onWorkspaceChange={handleWorkspaceChange}
         activeStatuses={activeStatuses}
       />
 

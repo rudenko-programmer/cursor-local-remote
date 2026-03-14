@@ -1,4 +1,4 @@
-import { listSessions, deleteSession, archiveSession, unarchiveSession, archiveAllSessions } from "@/lib/session-store";
+import { listSessions, deleteSession, archiveSession, unarchiveSession, archiveAllSessions, getArchivedSessionIds } from "@/lib/session-store";
 import { readCursorSessions } from "@/lib/transcript-reader";
 import { getWorkspace } from "@/lib/workspace";
 import { deleteSessionSchema, parseBody } from "@/lib/validation";
@@ -42,7 +42,17 @@ export async function GET(req: Request) {
 
   const cursorSessions = await readCursorSessions(workspace);
   const ourSessions = await listSessions(workspace, archived);
-  const merged = mergeSessions(ourSessions, cursorSessions);
+
+  if (archived) {
+    const archivedIds = await getArchivedSessionIds();
+    const archivedCursorSessions = cursorSessions.filter((s) => archivedIds.has(s.id));
+    const merged = mergeSessions(ourSessions, archivedCursorSessions);
+    return Response.json({ sessions: merged, workspace });
+  }
+
+  const archivedIds = await getArchivedSessionIds();
+  const activeCursorSessions = cursorSessions.filter((s) => !archivedIds.has(s.id));
+  const merged = mergeSessions(ourSessions, activeCursorSessions);
 
   return Response.json({ sessions: merged, workspace });
 }
@@ -64,17 +74,25 @@ export async function PATCH(req: Request) {
     const { action, sessionId, workspace } = body;
 
     switch (action) {
-      case "archive":
+      case "archive": {
         if (!sessionId) return badRequest("sessionId required");
-        await archiveSession(sessionId);
+        const ws = workspace || getWorkspace();
+        const cursorSessions = ws ? await readCursorSessions(ws) : [];
+        const cursorSession = cursorSessions.find((s) => s.id === sessionId);
+        await archiveSession(sessionId, cursorSession);
         break;
-      case "unarchive":
+      }
+      case "unarchive": {
         if (!sessionId) return badRequest("sessionId required");
         await unarchiveSession(sessionId);
         break;
-      case "archive_all":
-        await archiveAllSessions(workspace);
+      }
+      case "archive_all": {
+        const ws = workspace || getWorkspace();
+        const cursorSessions = ws ? await readCursorSessions(ws) : [];
+        await archiveAllSessions(workspace, cursorSessions);
         break;
+      }
       default:
         return badRequest("Invalid action");
     }

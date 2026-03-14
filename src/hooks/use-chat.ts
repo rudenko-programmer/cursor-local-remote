@@ -64,6 +64,7 @@ export function useChat(initialModel = "auto", initialWorkspace?: string): UseCh
 
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
   useEffect(() => { isStreamingRef.current = isStreaming; }, [isStreaming]);
+  useEffect(() => { if (!sessionId) workspaceRef.current = initialWorkspace; }, [initialWorkspace, sessionId]);
 
   const handleStreamEnd = useCallback(() => {
     setIsStreaming(false);

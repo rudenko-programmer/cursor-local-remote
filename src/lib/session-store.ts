@@ -140,9 +140,18 @@ export async function listSessions(workspace?: string, includeArchived = false):
   return rows.map(rowToSession);
 }
 
-export async function archiveSession(sessionId: string): Promise<void> {
+export async function archiveSession(sessionId: string, session?: StoredSession): Promise<void> {
   const conn = await getDb();
-  conn.run("UPDATE sessions SET archived = 1 WHERE id = ?", [sessionId]);
+  const existing = queryOne(conn, "SELECT id FROM sessions WHERE id = ?", [sessionId]);
+  if (!existing && session) {
+    const now = Date.now();
+    conn.run(
+      "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at, archived) VALUES (?, ?, ?, ?, ?, ?, 1)",
+      [session.id, session.title, session.workspace, session.preview, session.createdAt || now, session.updatedAt || now],
+    );
+  } else {
+    conn.run("UPDATE sessions SET archived = 1 WHERE id = ?", [sessionId]);
+  }
   save();
 }
 
@@ -152,14 +161,32 @@ export async function unarchiveSession(sessionId: string): Promise<void> {
   save();
 }
 
-export async function archiveAllSessions(workspace?: string): Promise<void> {
+export async function archiveAllSessions(workspace?: string, extraSessions?: StoredSession[]): Promise<void> {
   const conn = await getDb();
+  if (extraSessions) {
+    const now = Date.now();
+    for (const s of extraSessions) {
+      const existing = queryOne(conn, "SELECT id FROM sessions WHERE id = ?", [s.id]);
+      if (!existing) {
+        conn.run(
+          "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at, archived) VALUES (?, ?, ?, ?, ?, ?, 0)",
+          [s.id, s.title, s.workspace, s.preview, s.createdAt || now, s.updatedAt || now],
+        );
+      }
+    }
+  }
   if (workspace) {
     conn.run("UPDATE sessions SET archived = 1 WHERE workspace = ? AND archived = 0", [workspace]);
   } else {
     conn.run("UPDATE sessions SET archived = 1 WHERE archived = 0");
   }
   save();
+}
+
+export async function getArchivedSessionIds(): Promise<Set<string>> {
+  const conn = await getDb();
+  const rows = queryAll(conn, "SELECT id FROM sessions WHERE archived = 1");
+  return new Set(rows.map((r) => r.id as string));
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {

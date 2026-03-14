@@ -13,6 +13,7 @@ interface SessionSidebarProps {
   currentSessionId: string | null;
   onSelectSession: (id: string, workspace?: string) => void;
   onNewSession: (workspace?: string) => void;
+  onWorkspaceChange?: (workspace: string | null) => void;
   activeStatuses?: Record<string, "streaming" | "idle">;
 }
 
@@ -148,6 +149,7 @@ export function SessionSidebar({
   currentSessionId,
   onSelectSession,
   onNewSession,
+  onWorkspaceChange,
   activeStatuses = {},
 }: SessionSidebarProps) {
   const [sessions, setSessions] = useState<StoredSession[]>([]);
@@ -244,7 +246,10 @@ export function SessionSidebar({
     setSelectedProject(path);
     localStorage.setItem(PROJECT_STORAGE_KEY, path);
     setProjectDropdownOpen(false);
-  }, []);
+    if (path !== "__all__") {
+      onWorkspaceChange?.(path);
+    }
+  }, [onWorkspaceChange]);
 
   const handleDeleteClick = (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
@@ -264,13 +269,13 @@ export function SessionSidebar({
     }
   };
 
-  const handleArchiveClick = (e: React.MouseEvent, sessionId: string) => {
+  const handleArchiveClick = (e: React.MouseEvent, session: StoredSession) => {
     e.stopPropagation();
     haptics.tap();
     apiFetch("/api/sessions", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: showArchived ? "unarchive" : "archive", sessionId }),
+      body: JSON.stringify({ action: showArchived ? "unarchive" : "archive", sessionId: session.id, workspace: session.workspace }),
     })
       .then(() => fetchSessions())
       .catch(() => setFetchError("Failed to update session"));
@@ -525,7 +530,7 @@ export function SessionSidebar({
                     ) : (
                       <div className="absolute top-1 right-1 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
                         <button
-                          onClick={(e) => handleArchiveClick(e, s.id)}
+                          onClick={(e) => handleArchiveClick(e, s)}
                           aria-label={showArchived ? "Unarchive session" : "Archive session"}
                           className="p-1.5 rounded hover:bg-bg-surface text-text-muted hover:text-text-secondary transition-colors"
                         >

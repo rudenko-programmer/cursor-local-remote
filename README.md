@@ -31,6 +31,16 @@ clr
 
 A QR code pops up in your terminal — scan it from your phone and you're connected.
 
+## Updating
+
+```bash
+clr --update
+```
+
+Or the same command as install: `npm install -g cursor-local-remote`
+
+I'm actively using this myself on a daily basis, so bugs get noticed and fixed quickly.
+
 ## Features
 
 - **QR connect** — scan to connect your phone instantly and continue with phone coding session
@@ -82,15 +92,25 @@ clr [workspace] [options]
 | --- | --- |
 | `workspace` | Path to your project folder (defaults to cwd) |
 | `-p, --port` | Port to run on (default: `3100`) |
+| `-t, --token` | Set auth token (otherwise random or `AUTH_TOKEN` env) |
+| `--host` | Bind to specific host/IP (default: `0.0.0.0`) |
 | `--no-open` | Don't auto-open the browser |
 | `--no-qr` | Don't show QR code in terminal |
 | `--no-trust` | Disable workspace trust (agent will ask before actions) |
 | `-v, --verbose` | Show all server and agent output |
+| `-l, --list` | List discovered Cursor projects |
+| `--status` | Check if CLR is already running |
+| `-u, --update` | Update to the latest version |
+| `-V, --version` | Show version number |
 
 ```bash
 clr                          # current folder
 clr ~/projects/my-app        # specific project
 clr --port 8080              # different port
+clr --token my-secret        # fixed auth token
+clr --host 127.0.0.1         # localhost only
+clr --status                 # check for running instances
+clr --list                   # show all known projects
 clr --no-open --no-qr        # headless-friendly
 ```
 

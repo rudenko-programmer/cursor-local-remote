@@ -81,13 +81,16 @@ export async function sendWebhook(
   }
 }
 
-function buildSessionUrl(sessionId: string): string | undefined {
+function buildSessionUrl(sessionId: string, workspace?: string): string | undefined {
   try {
     const port = parseInt(process.env.PORT || String(DEFAULT_PORT), 10);
     const info = getNetworkInfo(port);
     const token = process.env.AUTH_TOKEN;
     const base = token ? `${info.url}?token=${token}` : info.url;
-    return `${base}#session=${sessionId}`;
+    const hash = workspace
+      ? `#session=${sessionId}&workspace=${encodeURIComponent(workspace)}`
+      : `#session=${sessionId}`;
+    return `${base}${hash}`;
   } catch {
     return undefined;
   }
@@ -125,7 +128,7 @@ export async function notifyAgentComplete(sessionId: string, workspace: string):
       event: "agent_complete",
       title: `Done - ${project}`,
       message: parts.join("\n\n"),
-      url: buildSessionUrl(sessionId),
+      url: buildSessionUrl(sessionId, workspace),
       sessionId,
       workspace,
       timestamp: Date.now(),

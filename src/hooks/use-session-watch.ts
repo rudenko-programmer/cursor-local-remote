@@ -39,13 +39,24 @@ export function useSessionWatch(options: UseSessionWatchOptions = {}) {
     setIsWatching(false);
   }, []);
 
+  const mergeMessages = useCallback((incoming: ChatMessage[]) => {
+    setMessages((prev) => {
+      const incomingIds = new Set(incoming.map((m) => m.id));
+      const optimistic = prev.filter(
+        (m) => m.role === "user" && !incomingIds.has(m.id),
+      );
+      if (optimistic.length === 0) return incoming;
+      return [...incoming, ...optimistic];
+    });
+  }, []);
+
   const applyUpdate = useCallback((data: Record<string, unknown>) => {
     if (data.modifiedAt && (data.modifiedAt as number) > lastModifiedRef.current) {
       lastModifiedRef.current = data.modifiedAt as number;
-      if ((data.messages as ChatMessage[])?.length > 0) setMessages(data.messages as ChatMessage[]);
+      if ((data.messages as ChatMessage[])?.length > 0) mergeMessages(data.messages as ChatMessage[]);
       if ((data.toolCalls as ToolCallInfo[])?.length > 0) setToolCalls(data.toolCalls as ToolCallInfo[]);
     }
-  }, []);
+  }, [mergeMessages]);
 
   const startWatching = useCallback(
     (id: string, workspace?: string) => {
@@ -68,7 +79,7 @@ export function useSessionWatch(options: UseSessionWatchOptions = {}) {
             onStreamEndRef.current?.();
           }
           if (data.modifiedAt) lastModifiedRef.current = data.modifiedAt;
-          if (data.messages?.length > 0) setMessages(data.messages);
+          if (data.messages?.length > 0) mergeMessages(data.messages);
           if (data.toolCalls?.length > 0) setToolCalls(data.toolCalls);
         } catch {
           console.error("[watch] Failed to parse connected event");
@@ -98,7 +109,7 @@ export function useSessionWatch(options: UseSessionWatchOptions = {}) {
         }
       });
     },
-    [stopWatching, applyUpdate],
+    [stopWatching, applyUpdate, mergeMessages],
   );
 
   const refreshFromHistory = useCallback(async (sessionId: string, workspace?: string) => {
@@ -108,13 +119,13 @@ export function useSessionWatch(options: UseSessionWatchOptions = {}) {
       const res = await apiFetch(url);
       if (!res.ok) return;
       const data = await res.json();
-      if (data.messages?.length > 0) setMessages(data.messages);
+      if (data.messages?.length > 0) mergeMessages(data.messages);
       if (data.toolCalls?.length > 0) setToolCalls(data.toolCalls);
       if (data.modifiedAt) lastModifiedRef.current = data.modifiedAt;
     } catch {
       console.error("[watch] Failed to refresh from history");
     }
-  }, []);
+  }, [mergeMessages]);
 
   const resetState = useCallback(() => {
     setMessages([]);

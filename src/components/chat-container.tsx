@@ -10,8 +10,9 @@ import type { StoredSession } from "@/lib/types";
 import { MessageList } from "./message-list";
 import { ChatInput } from "./chat-input";
 import { exportSessionMarkdown } from "@/lib/export";
-import { MenuIcon, SettingsIcon, ExportIcon, CheckIcon, GitBranchIcon, CloseIcon } from "./icons";
+import { MenuIcon, SettingsIcon, ExportIcon, CheckIcon, GitBranchIcon, CloseIcon, TerminalIcon } from "./icons";
 import { GitPanel } from "./git-panel";
+import { TerminalPanel } from "./terminal-panel";
 
 interface ChatContainerProps {
   initialSessionId?: string;
@@ -70,6 +71,8 @@ export function ChatContainer({
   const [exportCopied, setExportCopied] = useState(false);
   const [gitInfo, setGitInfo] = useState<{ branch: string; changedFiles: number } | null>(null);
   const [gitPanelOpen, setGitPanelOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalCount, setTerminalCount] = useState(0);
   const prevMsgCountRef = useRef(0);
   const loadedInitialRef = useRef(false);
   const prevStreamingRef = useRef(false);
@@ -225,6 +228,16 @@ export function ChatContainer({
               )}
             </button>
           )}
+          <button
+            onClick={() => setTerminalOpen(true)}
+            className="flex items-center gap-1 text-[10px] text-text-muted bg-bg-surface hover:bg-bg-hover rounded px-1.5 py-0.5 transition-colors"
+          >
+            <TerminalIcon size={10} />
+            <span>Terminal</span>
+            {terminalCount > 0 && (
+              <span className="text-success">{terminalCount}</span>
+            )}
+          </button>
           {isStreaming && (
             <>
               {model && (
@@ -364,6 +377,13 @@ export function ChatContainer({
           }
         }}
         workspace={workspace || undefined}
+      />
+
+      <TerminalPanel
+        open={terminalOpen}
+        onClose={() => setTerminalOpen(false)}
+        workspace={workspace || undefined}
+        onCountChange={setTerminalCount}
       />
     </div>
   );
