@@ -66,9 +66,42 @@ const args = isStart
   ? ["start", "--hostname", "0.0.0.0", "--port", String(port)]
   : ["dev", "--hostname", "0.0.0.0", "--port", String(port)];
 
-const lanIp = Object.values(networkInterfaces())
-  .flat()
-  .find((a) => a?.family === "IPv4" && !a.internal)?.address;
+const scoredIps = [];
+for (const [name, addrs] of Object.entries(networkInterfaces())) {
+  for (const addr of addrs ?? []) {
+    if (addr?.family !== "IPv4" || addr.internal || typeof addr.address !== "string") continue;
+
+    const n = name.toLowerCase();
+    let score = 0;
+
+    if (n.includes("wi-fi") || n.includes("wifi") || n.includes("wlan") || n.includes("wireless")) {
+      score += 100;
+    }
+    if (n.includes("ethernet") || n.startsWith("eth") || n.startsWith("en")) {
+      score += 80;
+    }
+    if (
+      n.includes("vethernet") ||
+      n.includes("hyper-v") ||
+      n.includes("wsl") ||
+      n.includes("docker") ||
+      n.includes("vmware") ||
+      n.includes("virtual") ||
+      n.includes("vpn") ||
+      n.includes("tun") ||
+      n.includes("tap")
+    ) {
+      score -= 200;
+    }
+    if (addr.address.startsWith("169.254.")) {
+      score -= 300;
+    }
+
+    scoredIps.push({ address: addr.address, score });
+  }
+}
+scoredIps.sort((a, b) => b.score - a.score);
+const lanIp = scoredIps[0]?.address;
 
 const localUrl = `http://localhost:${port}`;
 const networkUrl = lanIp ? `http://${lanIp}:${port}` : null;

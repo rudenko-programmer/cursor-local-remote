@@ -263,14 +263,56 @@ async function findAvailablePort(startPort) {
 
 function getLanIp() {
   const interfaces = networkInterfaces();
+  const candidates = [];
+
+  const scoreInterface = (name, address) => {
+    const n = name.toLowerCase();
+    let score = 0;
+
+    if (n.includes("wi-fi") || n.includes("wifi") || n.includes("wlan") || n.includes("wireless")) {
+      score += 100;
+    }
+    if (n.includes("ethernet") || n.startsWith("eth") || n.startsWith("en")) {
+      score += 80;
+    }
+
+    if (
+      n.includes("vethernet") ||
+      n.includes("hyper-v") ||
+      n.includes("wsl") ||
+      n.includes("docker") ||
+      n.includes("vmware") ||
+      n.includes("virtual") ||
+      n.includes("vpn") ||
+      n.includes("tun") ||
+      n.includes("tap")
+    ) {
+      score -= 200;
+    }
+
+    if (address.startsWith("169.254.")) {
+      score -= 300;
+    }
+
+    return score;
+  };
+
   for (const name of Object.keys(interfaces)) {
     const addrs = interfaces[name];
     if (!addrs) continue;
     for (const addr of addrs) {
-      if (addr.family === "IPv4" && !addr.internal) return addr.address;
+      if (addr.family === "IPv4" && !addr.internal && typeof addr.address === "string") {
+        candidates.push({
+          address: addr.address,
+          score: scoreInterface(name, addr.address),
+        });
+      }
     }
   }
-  return null;
+
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0].address;
 }
 
 const availablePort = await findAvailablePort(portNum);
@@ -285,8 +327,10 @@ const port = String(availablePort);
 
 const lanIp = getLanIp();
 const isLocalOnly = hostname === "127.0.0.1" || hostname === "localhost";
+const explicitHost = hostname !== "0.0.0.0" && !isLocalOnly ? hostname : null;
 const localUrl = `http://localhost:${port}`;
-const networkUrl = !isLocalOnly && lanIp ? `http://${lanIp}:${port}` : null;
+const networkHost = explicitHost || lanIp;
+const networkUrl = !isLocalOnly && networkHost ? `http://${networkHost}:${port}` : null;
 
 const authToken = customToken || process.env.AUTH_TOKEN || generateToken();
 

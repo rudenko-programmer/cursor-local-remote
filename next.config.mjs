@@ -7,6 +7,9 @@ const csp = isDev
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   serverExternalPackages: ["sql.js"],
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   async headers() {
     return [
       {

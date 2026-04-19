@@ -1,5 +1,5 @@
 import { listSessions, deleteSession, archiveSession, unarchiveSession, archiveAllSessions, getArchivedSessionIds } from "@/lib/session-store";
-import { readCursorSessions } from "@/lib/transcript-reader";
+import { readCursorSessions, listProjects } from "@/lib/transcript-reader";
 import { getWorkspace } from "@/lib/workspace";
 import { deleteSessionSchema, parseBody } from "@/lib/validation";
 import { badRequest, parseJsonBody, serverError } from "@/lib/errors";
@@ -17,8 +17,12 @@ function mergeSessions(ours: StoredSession[], cursor: StoredSession[]): StoredSe
   for (const s of ours) {
     const existing = byId.get(s.id);
     if (existing) {
+      const source = s.source === "web" || existing.source === "web" ? "web" : "ide";
       byId.set(s.id, {
         ...existing,
+        ...s,
+        source,
+        createdAt: Math.min(existing.createdAt, s.createdAt),
         updatedAt: Math.max(existing.updatedAt, s.updatedAt),
       });
     } else {
@@ -41,8 +45,24 @@ export async function GET(req: Request) {
 
   if (all) {
     const ours = await listSessions(undefined, archived);
-    vlog("sessions", "all mode", { count: ours.length, ms: Date.now() - t0 });
-    return Response.json({ sessions: ours, workspace });
+    const projects = await listProjects();
+    const cursorNested = await Promise.all(projects.map((p) => readCursorSessions(p.path)));
+    const cursorAll = cursorNested.flat();
+
+    const archivedIds = await getArchivedSessionIds();
+    const filteredCursor = archived
+      ? cursorAll.filter((s) => archivedIds.has(s.id))
+      : cursorAll.filter((s) => !archivedIds.has(s.id));
+
+    const merged = mergeSessions(ours, filteredCursor);
+    vlog("sessions", "all mode", {
+      ours: ours.length,
+      projects: projects.length,
+      cursor: filteredCursor.length,
+      merged: merged.length,
+      ms: Date.now() - t0,
+    });
+    return Response.json({ sessions: merged, workspace });
   }
 
   const cursorSessions = await readCursorSessions(workspace);

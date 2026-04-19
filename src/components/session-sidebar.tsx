@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, useMemo } from "react";
 import type { StoredSession, ProjectInfo } from "@/lib/types";
 import { useHaptics } from "@/hooks/use-haptics";
 import { apiFetch } from "@/lib/api-fetch";
@@ -25,6 +25,21 @@ function StatusIndicator({ status }: { status: "streaming" | "idle" }) {
     );
   }
   return <span className="shrink-0 w-1.5 h-1.5 rounded-full bg-text-muted/40" />;
+}
+
+function SourceBadge({ source }: { source: "ide" | "web" }) {
+  const isIde = source === "ide";
+  return (
+    <span
+      className={`shrink-0 px-1.5 py-0.5 rounded border text-[9px] font-semibold tracking-wide ${
+        isIde
+          ? "border-success/40 text-success bg-success/10"
+          : "border-border text-text-muted bg-bg-surface"
+      }`}
+    >
+      {isIde ? "IDE" : "WEB"}
+    </span>
+  );
 }
 
 function ArchiveIcon({ size = 12, className = "" }: { size?: number; className?: string }) {
@@ -155,6 +170,7 @@ export function SessionSidebar({
   workspaceTerminals = {},
 }: SessionSidebarProps) {
   const [sessions, setSessions] = useState<StoredSession[]>([]);
+  const [ideActiveSessionIds, setIdeActiveSessionIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
@@ -205,8 +221,11 @@ export function SessionSidebar({
       .then((data) => {
         setProjects(data.projects || []);
         if (!selectedProject && data.currentWorkspace) {
-          setSelectedProject(data.currentWorkspace);
-          localStorage.setItem(PROJECT_STORAGE_KEY, data.currentWorkspace);
+          const hasCurrent = Array.isArray(data.projects)
+            && data.projects.some((p: ProjectInfo) => p.path === data.currentWorkspace);
+          const nextProject = hasCurrent ? data.currentWorkspace : "__all__";
+          setSelectedProject(nextProject);
+          localStorage.setItem(PROJECT_STORAGE_KEY, nextProject);
         }
       })
       .catch(() => {});
@@ -226,9 +245,44 @@ export function SessionSidebar({
     const qs = params.toString();
     return apiFetch("/api/sessions" + (qs ? "?" + qs : ""))
       .then((r) => r.json())
-      .then((data) => setSessions(data.sessions || []))
+      .then((data) => {
+        const next: StoredSession[] = data.sessions || [];
+        setSessions(next);
+        return next;
+      })
       .catch(() => setFetchError("Failed to load sessions"));
   }, [selectedProject, showArchived]);
+
+  const fetchIdeActiveSessions = useCallback((list: StoredSession[]) => {
+    const ideSessions = list.filter((s) => s.source !== "web");
+
+    if (ideSessions.length === 0) {
+      setIdeActiveSessionIds([]);
+      return Promise.resolve();
+    }
+
+    return apiFetch("/api/sessions/ide-active", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessions: ideSessions.map((s) => ({ id: s.id, workspace: s.workspace })),
+      }),
+    })
+      .then((r) => r.json())
+      .then((data) => {
+        setIdeActiveSessionIds(Array.isArray(data.sessions) ? data.sessions : []);
+      })
+      .catch(() => {
+        setIdeActiveSessionIds([]);
+      });
+  }, []);
+
+  const refreshSessions = useCallback(() => {
+    return fetchSessions().then((list) => {
+      const next = Array.isArray(list) ? list : [];
+      return fetchIdeActiveSessions(next);
+    });
+  }, [fetchSessions, fetchIdeActiveSessions]);
 
   useEffect(() => {
     if (!open) return;
@@ -236,13 +290,27 @@ export function SessionSidebar({
     setLoading(true); // eslint-disable-line react-hooks/set-state-in-effect -- loading state for fetch
     setConfirmingDelete(null);
     fetchProjects();
-    fetchSessions().finally(() => {
-      if (!cancelled) setLoading(false);
-    });
+    refreshSessions()
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => {
       cancelled = true;
     };
-  }, [open, fetchSessions, fetchProjects]);
+  }, [open, fetchProjects, refreshSessions]);
+
+  useEffect(() => {
+    if (open) return;
+    setIdeActiveSessionIds([]);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || sessions.length === 0) return;
+    const id = setInterval(() => {
+      void fetchIdeActiveSessions(sessions);
+    }, 5_000);
+    return () => clearInterval(id);
+  }, [open, sessions, fetchIdeActiveSessions]);
 
   const handleProjectSelect = useCallback((path: string) => {
     setSelectedProject(path);
@@ -262,7 +330,7 @@ export function SessionSidebar({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sessionId }),
       })
-        .then(() => fetchSessions())
+        .then(() => refreshSessions())
         .catch(() => setFetchError("Failed to delete session"))
         .finally(() => setConfirmingDelete(null));
     } else {
@@ -279,7 +347,7 @@ export function SessionSidebar({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: showArchived ? "unarchive" : "archive", sessionId: session.id, workspace: session.workspace }),
     })
-      .then(() => fetchSessions())
+      .then(() => refreshSessions())
       .catch(() => setFetchError("Failed to update session"));
   };
 
@@ -291,7 +359,7 @@ export function SessionSidebar({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "archive_all", workspace }),
     })
-      .then(() => fetchSessions())
+      .then(() => refreshSessions())
       .catch(() => setFetchError("Failed to archive sessions"));
   };
 
@@ -305,6 +373,8 @@ export function SessionSidebar({
     : projects.find((p) => p.path === selectedProject)?.name
       || selectedProject?.split("/").pop()
       || "Current project";
+
+  const ideActiveSet = useMemo(() => new Set(ideActiveSessionIds), [ideActiveSessionIds]);
 
   return (
     <>
@@ -324,7 +394,7 @@ export function SessionSidebar({
               onClick={() => {
                 haptics.tap();
                 setLoading(true);
-                fetchSessions().finally(() => setLoading(false));
+                refreshSessions().finally(() => setLoading(false));
               }}
               disabled={loading}
               aria-label="Refresh sessions"
@@ -492,7 +562,12 @@ export function SessionSidebar({
             </p>
           ) : (
             sessions.map((s) => {
-              const status = activeStatuses[s.id];
+              const source = s.source === "web" ? "web" : "ide";
+              const ideActive = source === "ide" && ideActiveSet.has(s.id);
+              const webStreaming = activeStatuses[s.id] === "streaming";
+              const status = webStreaming || ideActive
+                ? "streaming"
+                : activeStatuses[s.id];
               return (
                 <SessionTooltip key={s.id} session={s}>
                   <div className="relative mb-px">
@@ -513,6 +588,8 @@ export function SessionSidebar({
                         <div className="flex items-center gap-1.5 flex-1 min-w-0 pr-12">
                           {status && <StatusIndicator status={status} />}
                           <p className="text-[12px] truncate">{s.title}</p>
+                          {source === "ide" && <SourceBadge source="ide" />}
+                          {source === "web" && <SourceBadge source="web" />}
                         </div>
                         <span className="text-[10px] text-text-muted shrink-0">
                           {timeAgo(s.updatedAt)}

@@ -34,6 +34,7 @@ export interface StoredSession {
   preview: string;
   createdAt: number;
   updatedAt: number;
+  source?: "web" | "ide";
 }
 
 export type AgentMode = "agent" | "ask" | "plan";

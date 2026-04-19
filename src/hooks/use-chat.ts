@@ -169,6 +169,7 @@ export function useChat(initialModel = "auto", initialWorkspace?: string): UseCh
 
       const effectiveModel = overrides?.model ?? selectedModel;
       const effectiveMode = overrides?.mode ?? selectedMode;
+      const isResume = !!sessionIdRef.current;
 
       try {
         const res = await apiFetch("/api/chat", {
@@ -177,8 +178,9 @@ export function useChat(initialModel = "auto", initialWorkspace?: string): UseCh
           body: JSON.stringify({
             prompt,
             sessionId: sessionIdRef.current ?? undefined,
-            model: effectiveModel !== "auto" ? effectiveModel : undefined,
-            mode: effectiveMode !== "agent" ? effectiveMode : undefined,
+            // Keep resumed conversations on their original agent settings.
+            model: !isResume && effectiveModel !== "auto" ? effectiveModel : undefined,
+            mode: !isResume && effectiveMode !== "agent" ? effectiveMode : undefined,
             workspace: workspaceRef.current,
           }),
         });

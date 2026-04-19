@@ -50,6 +50,11 @@ export async function getDb(): Promise<Database> {
   } catch {
     // column already exists
   }
+  try {
+    db.run("ALTER TABLE sessions ADD COLUMN source TEXT NOT NULL DEFAULT 'web'");
+  } catch {
+    // column already exists
+  }
   db.run(`
     CREATE TABLE IF NOT EXISTS config (
       key TEXT PRIMARY KEY,
@@ -89,6 +94,8 @@ function queryAll(conn: Database, sql: string, params: SqlValue[] = []): Record<
 }
 
 function rowToSession(row: Record<string, SqlValue>): StoredSession {
+  const sourceRaw = row.source;
+  const source = sourceRaw === "ide" ? "ide" : "web";
   return {
     id: row.id as string,
     title: row.title as string,
@@ -96,6 +103,7 @@ function rowToSession(row: Record<string, SqlValue>): StoredSession {
     preview: row.preview as string,
     createdAt: row.created_at as number,
     updatedAt: row.updated_at as number,
+    source,
   };
 }
 
@@ -116,19 +124,19 @@ export async function upsertSession(
 
   if (existing) {
     const preview = firstMessage ? firstMessage.slice(0, 120) : (existing.preview as string);
-    conn.run("UPDATE sessions SET updated_at = ?, preview = ? WHERE id = ?", [now, preview, sessionId]);
+    conn.run("UPDATE sessions SET updated_at = ?, preview = ?, source = 'web' WHERE id = ?", [now, preview, sessionId]);
     save();
-    return rowToSession({ ...existing, updated_at: now, preview });
+    return rowToSession({ ...existing, updated_at: now, preview, source: "web" });
   }
 
   const title = firstMessage.slice(0, 60) || "New session";
   const preview = firstMessage.slice(0, 120);
   conn.run(
-    "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-    [sessionId, title, workspace, preview, now, now],
+    "INSERT INTO sessions (id, title, workspace, preview, created_at, updated_at, source) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    [sessionId, title, workspace, preview, now, now, "web"],
   );
   save();
-  return { id: sessionId, title, workspace, preview, createdAt: now, updatedAt: now };
+  return { id: sessionId, title, workspace, preview, createdAt: now, updatedAt: now, source: "web" };
 }
 
 export async function listSessions(workspace?: string, includeArchived = false): Promise<StoredSession[]> {

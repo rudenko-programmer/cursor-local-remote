@@ -97,10 +97,6 @@ export async function POST(req: Request) {
 
     registerProcess(requestId, child, workspace);
 
-    if (body.sessionId) {
-      promoteToSessionId(requestId, body.sessionId);
-    }
-
     const verbose = process.env.CLR_VERBOSE === "1";
 
     child.stderr?.on("data", (chunk: Buffer) => {

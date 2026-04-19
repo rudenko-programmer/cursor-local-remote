@@ -1,19 +1,51 @@
 import { readdir, stat, readFile, access } from "fs/promises";
-import { join, resolve, sep } from "path";
+import { join, resolve, sep, relative, isAbsolute } from "path";
 import { homedir } from "os";
 import { existsSync, statSync } from "fs";
 import type { StoredSession, ChatMessage, ToolCallInfo, TodoItem, ProjectInfo } from "@/lib/types";
 import { vlog } from "@/lib/verbose";
+import { IDE_ACTIVITY_WINDOW_MS } from "@/lib/constants";
 
 const CURSOR_PROJECTS_DIR = join(homedir(), ".cursor", "projects");
 
+function keyComparable(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+function keyFromWorkspace(workspace: string): string {
+  const abs = resolve(workspace).replace(/\\/g, "/");
+  const normalizedDrive = abs.replace(/^([A-Za-z]):/, (_, drive: string) => `${drive.toLowerCase()}`);
+
+  const parts = normalizedDrive
+    .replace(/^\/+/, "")
+    .split("/")
+    .map((part) =>
+      part
+        .replace(/[^a-zA-Z0-9]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, ""),
+    )
+    .filter(Boolean);
+
+  return parts.join("-");
+}
+
 export function workspaceToProjectKey(workspace: string): string {
-  const abs = resolve(workspace);
-  return abs.replace(/^\//, "").replace(/\//g, "-");
+  return keyFromWorkspace(workspace);
 }
 
 function projectKeyToWorkspace(key: string): string | null {
   const parts = key.split("-");
+  if (parts.length > 1 && /^[a-zA-Z]$/.test(parts[0])) {
+    const winPath = `${parts[0].toUpperCase()}:/${parts.slice(1).join("/")}`;
+    const resolved = resolve(winPath);
+    if (existsSync(resolved)) return resolved;
+  }
+
   let path = sep + parts[0];
   for (let i = 1; i < parts.length; i++) {
     const withSlash = path + sep + parts[i];
@@ -32,7 +64,7 @@ export async function listProjects(): Promise<ProjectInfo[]> {
   try {
     const entries = await readdir(CURSOR_PROJECTS_DIR);
     for (const entry of entries) {
-      if (!/^[A-Z]/.test(entry)) continue;
+      if (!/^[A-Za-z]/.test(entry)) continue;
       const transcriptsDir = join(CURSOR_PROJECTS_DIR, entry, "agent-transcripts");
       try {
         await access(transcriptsDir);
@@ -58,6 +90,25 @@ async function findTranscriptsDir(workspace: string): Promise<string | null> {
     vlog("reader", "transcripts dir found", dir);
     return dir;
   } catch {
+    try {
+      const target = keyComparable(key);
+      const entries = await readdir(CURSOR_PROJECTS_DIR);
+
+      for (const entry of entries) {
+        if (keyComparable(entry) !== target) continue;
+        const fallbackDir = join(CURSOR_PROJECTS_DIR, entry, "agent-transcripts");
+        try {
+          await access(fallbackDir);
+          vlog("reader", "transcripts dir found via fallback", { workspace, key, entry, fallbackDir });
+          return fallbackDir;
+        } catch {
+          // keep searching
+        }
+      }
+    } catch {
+      // ignore fallback lookup errors
+    }
+
     vlog("reader", "transcripts dir not found", dir, "workspace", workspace, "key", key);
     return null;
   }
@@ -86,7 +137,10 @@ async function extractFirstUserMessage(jsonlPath: string): Promise<string> {
     if (entry.role === "user") {
       const msg = entry.message as Record<string, unknown> | undefined;
       const content = msg?.content as Array<Record<string, unknown>> | undefined;
-      const text: string = (content?.[0]?.text as string) || "";
+      const text = (content || [])
+        .map((part) => (part.type === "text" ? part.text : ""))
+        .filter((part): part is string => typeof part === "string")
+        .join("");
       return text
         .replace(/<[^>]+>/g, "")
         .trim()
@@ -144,16 +198,16 @@ export async function readCursorSessions(workspace: string): Promise<StoredSessi
       const s = await stat(jsonl);
       const sessionId = entry.replace(".jsonl", "");
       const preview = await extractFirstUserMessage(jsonl);
-
-      if (!preview) continue;
+      const fallbackPreview = preview || `Session ${sessionId.slice(0, 8)}`;
 
       sessions.push({
         id: sessionId,
-        title: preview.slice(0, 60),
+        title: fallbackPreview.slice(0, 60),
         workspace,
-        preview,
+        preview: fallbackPreview,
         createdAt: s.birthtimeMs,
         updatedAt: s.mtimeMs,
+        source: "ide",
       });
     }
   } catch {
@@ -171,10 +225,38 @@ function stripXmlTags(text: string): string {
     .trim();
 }
 
+const ASSISTANT_REASONING_MARKER_RE =
+  /\n{2,}(The user(?:\s+just)?\s+said\b|Now I(?:\s+need to|\s+am|\s+'m)\b|I need to\b|Let me\b|My initial assessment\b|Key observations\b|One thing I should\b|Actually, let me\b)/i;
+
+const ASSISTANT_THINKING_ONLY_RE =
+  /^(Let me\b|I need to\b|Now I(?:\s+need to|\s+am|\s+'m)\b|First,? I'll\b|I'll\s+now\b)/i;
+
+function sanitizeAssistantText(text: string, hasToolUse: boolean): string {
+  const normalized = text.replace(/\r\n/g, "\n").trim();
+  if (!normalized) return "";
+
+  const marker = normalized.match(ASSISTANT_REASONING_MARKER_RE);
+  if (marker && marker.index && marker.index > 40) {
+    return normalized.slice(0, marker.index).trim();
+  }
+
+  // Tool-use entries often include internal planning text; hide that noise.
+  if (hasToolUse && ASSISTANT_THINKING_ONLY_RE.test(normalized)) {
+    return "";
+  }
+
+  return normalized;
+}
+
 export interface SessionHistoryResult {
   messages: ChatMessage[];
   toolCalls: ToolCallInfo[];
   modifiedAt: number;
+}
+
+export function isSessionLikelyActive(modifiedAt: number, now = Date.now(), windowMs = IDE_ACTIVITY_WINDOW_MS): boolean {
+  if (!Number.isFinite(modifiedAt) || modifiedAt <= 0) return false;
+  return now - modifiedAt <= windowMs;
 }
 
 export async function resolveJsonlPath(workspace: string, sessionId: string): Promise<string | null> {
@@ -186,7 +268,8 @@ export async function resolveJsonlPath(workspace: string, sessionId: string): Pr
 
   const resolvedDir = resolve(dir);
   const entryPath = resolve(dir, sessionId);
-  if (!entryPath.startsWith(resolvedDir + "/")) {
+  const rel = relative(resolvedDir, entryPath);
+  if (rel.startsWith("..") || isAbsolute(rel)) {
     vlog("reader", "resolveJsonlPath: path traversal blocked", { entryPath, resolvedDir });
     return null;
   }
@@ -319,6 +402,11 @@ export function parseLiveEvents(
     const contentArr = (event.message as Record<string, unknown> | undefined)?.content;
     if (!Array.isArray(contentArr)) continue;
 
+    const hasToolUse = contentArr.some((part) => {
+      if (typeof part !== "object" || part === null) return false;
+      return (part as Record<string, unknown>).type === "tool_use";
+    });
+
     const textParts: string[] = [];
     for (const part of contentArr) {
       if ((part as Record<string, unknown>).type === "text" && (part as Record<string, unknown>).text) {
@@ -329,20 +417,17 @@ export function parseLiveEvents(
     let text = textParts.join("");
     if (role === "user") {
       text = stripXmlTags(text);
+    } else {
+      text = sanitizeAssistantText(text, hasToolUse);
     }
 
     if (text.trim()) {
-      const prev = messages[messages.length - 1];
-      if (prev && prev.role === role) {
-        prev.content += text;
-      } else {
-        messages.push({
-          id: `${sessionId}-live-${counter.n++}`,
-          role: role as "user" | "assistant",
-          content: text,
-          timestamp: baseTimestamp + counter.n,
-        });
-      }
+      messages.push({
+        id: `${sessionId}-live-${counter.n++}`,
+        role: role as "user" | "assistant",
+        content: text,
+        timestamp: baseTimestamp + counter.n,
+      });
     }
 
     if (role === "assistant") {
@@ -391,6 +476,11 @@ export async function readSessionMessages(workspace: string, sessionId: string):
       continue;
     }
 
+    const hasToolUse = contentArr.some((part) => {
+      if (typeof part !== "object" || part === null) return false;
+      return (part as Record<string, unknown>).type === "tool_use";
+    });
+
     const textParts: string[] = [];
     for (const part of contentArr) {
       if (part.type === "text" && part.text) {
@@ -401,20 +491,17 @@ export async function readSessionMessages(workspace: string, sessionId: string):
     let text = textParts.join("");
     if (role === "user") {
       text = stripXmlTags(text);
+    } else {
+      text = sanitizeAssistantText(text, hasToolUse);
     }
 
     if (text.trim()) {
-      const prev = messages[messages.length - 1];
-      if (prev && prev.role === role) {
-        prev.content += text;
-      } else {
-        messages.push({
-          id: `${sessionId}-${counter.n++}`,
-          role: role as "user" | "assistant",
-          content: text,
-          timestamp: baseTimestamp + counter.n,
-        });
-      }
+      messages.push({
+        id: `${sessionId}-${counter.n++}`,
+        role: role as "user" | "assistant",
+        content: text,
+        timestamp: baseTimestamp + counter.n,
+      });
     }
 
     if (role === "assistant") {

@@ -3,11 +3,21 @@ import type { AgentMode } from "@/lib/types";
 import { getConfig } from "@/lib/session-store";
 
 let agentChecked = false;
+const AGENT_COMMAND = "agent";
+const AGENT_SHELL = process.platform === "win32";
+
+export function getAgentCommand(): string {
+  return AGENT_COMMAND;
+}
+
+export function getAgentShell(): boolean {
+  return AGENT_SHELL;
+}
 
 function ensureAgentOnPath(): void {
   if (agentChecked) return;
   try {
-    execFileSync("agent", ["--version"], { stdio: "ignore", timeout: 5_000 });
+    execFileSync(AGENT_COMMAND, ["--version"], { stdio: "ignore", timeout: 5_000, shell: AGENT_SHELL });
     agentChecked = true;
   } catch {
     throw new Error(
@@ -51,9 +61,10 @@ export async function spawnAgent(options: AgentOptions): Promise<ChildProcess> {
     args.push("--mode", options.mode);
   }
 
-  return spawn("agent", args, {
+  return spawn(AGENT_COMMAND, args, {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env },
+    shell: AGENT_SHELL,
   });
 }
 
